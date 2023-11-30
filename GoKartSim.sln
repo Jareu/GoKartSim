@@ -1,0 +1,30 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.4.33213.308
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{47aeefb2-ff4e-4b19-90db-f0b15d111f8a}") = "GoKartSim", "GoKartSim\GoKartSim.vcxproj", "{600c57e9-7ff2-4708-828c-75aebc9fb4f6}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{600c57e9-7ff2-4708-828c-75aebc9fb4f6}.Debug|x64.ActiveCfg = Debug|x64
+		{600c57e9-7ff2-4708-828c-75aebc9fb4f6}.Debug|x64.Build.0 = Debug|x64
+		{600c57e9-7ff2-4708-828c-75aebc9fb4f6}.Debug|x86.ActiveCfg = Debug|Win32
+		{600c57e9-7ff2-4708-828c-75aebc9fb4f6}.Debug|x86.Build.0 = Debug|Win32
+		{600c57e9-7ff2-4708-828c-75aebc9fb4f6}.Release|x64.ActiveCfg = Release|x64
+		{600c57e9-7ff2-4708-828c-75aebc9fb4f6}.Release|x64.Build.0 = Release|x64
+		{600c57e9-7ff2-4708-828c-75aebc9fb4f6}.Release|x86.ActiveCfg = Release|Win32
+		{600c57e9-7ff2-4708-828c-75aebc9fb4f6}.Release|x86.Build.0 = Release|Win32
+	EndGlobalSection
+GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {884c7399-fca9-4d7c-8dfc-4cb2a67e2182}
+	EndGlobalSection
+EndGlobal
