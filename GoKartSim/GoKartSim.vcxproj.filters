@@ -19,6 +19,9 @@
     <Filter Include="Classes">
       <UniqueIdentifier>{41c6aec1-81bb-4f8e-8d35-b7189232d23f}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Shaders">
+      <UniqueIdentifier>{7d7b30e7-7b1c-4c98-a258-44de3fb5d6bb}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -52,6 +55,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Noise.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ShaderUtil.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -89,5 +95,16 @@
     <ClInclude Include="Universe.h">
       <Filter>Classes</Filter>
     </ClInclude>
+    <ClInclude Include="ShaderUtil.h">
+      <Filter>Classes</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="vs.shader">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="fs.shader">
+      <Filter>Shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

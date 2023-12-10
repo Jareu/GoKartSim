@@ -74,7 +74,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
       <AdditionalIncludeDirectories>$(SolutionDir)libraries\sdl2\include;$(SolutionDir)libraries\imgui;$(SolutionDir)libraries\imgui\backends;$(SolutionDir)libraries\glfw\include\GLFW;$(SolutionDir)libraries\glew\include\GL;$(SolutionDir)libraries\freeglut\include\GL;$(SolutionDir)libraries\opengl\include\GL;$(SolutionDir)libraries\FastNoise2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
@@ -92,7 +92,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
       <AdditionalIncludeDirectories>$(SolutionDir)libraries\sdl2\include;$(SolutionDir)libraries\imgui;$(SolutionDir)libraries\imgui\backends;$(SolutionDir)libraries\glfw\include\GLFW;$(SolutionDir)libraries\glew\include\GL;$(SolutionDir)libraries\freeglut\include\GL;$(SolutionDir)libraries\opengl\include\GL;$(SolutionDir)libraries\FastNoise2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
@@ -110,7 +110,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
       <AdditionalIncludeDirectories>$(SolutionDir)libraries\sdl2\include;$(SolutionDir)libraries\imgui;$(SolutionDir)libraries\imgui\backends;$(SolutionDir)libraries\glfw\include\GLFW;$(SolutionDir)libraries\glew\include\GL;$(SolutionDir)libraries\freeglut\include\GL;$(SolutionDir)libraries\opengl\include\GL;$(SolutionDir)libraries\FastNoise2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
@@ -128,7 +128,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
       <AdditionalIncludeDirectories>$(SolutionDir)libraries\sdl2\include;$(SolutionDir)libraries\imgui;$(SolutionDir)libraries\imgui\backends;$(SolutionDir)libraries\glfw\include\GLFW;$(SolutionDir)libraries\glew\include\GL;$(SolutionDir)libraries\freeglut\include\GL;$(SolutionDir)libraries\opengl\include\GL;$(SolutionDir)libraries\FastNoise2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
@@ -151,6 +151,7 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="GoKart.cpp" />
     <ClCompile Include="Noise.cpp" />
+    <ClCompile Include="ShaderUtil.cpp" />
     <ClCompile Include="Universe.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -164,7 +165,12 @@
     <ClInclude Include="GoKart.h" />
     <ClInclude Include="main.h" />
     <ClInclude Include="Noise.h" />
+    <ClInclude Include="ShaderUtil.h" />
     <ClInclude Include="Universe.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="fs.shader" />
+    <None Include="vs.shader" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
