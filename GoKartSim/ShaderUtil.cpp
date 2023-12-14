@@ -30,7 +30,7 @@ unsigned int ShaderUtil::GetCompiledShader(unsigned int shader_type, const std::
 	return shader_id;
 }
 
-bool ShaderUtil::load(const std::string& vertexShaderFile, const std::string& fragmentShaderFile)
+bool ShaderUtil::load(const std::string& vertexShaderFile, const std::string& fragmentShaderFile, const std::string& geometryShaderFile)
 {
 	std::ifstream is_vs(vertexShaderFile);
 	const std::string f_vs((std::istreambuf_iterator<char>(is_vs)), std::istreambuf_iterator<char>());
@@ -38,13 +38,18 @@ bool ShaderUtil::load(const std::string& vertexShaderFile, const std::string& fr
 	std::ifstream is_fs(fragmentShaderFile);
 	const std::string f_fs((std::istreambuf_iterator<char>(is_fs)), std::istreambuf_iterator<char>());
 
+	std::ifstream is_gs(geometryShaderFile);
+	const std::string f_gs((std::istreambuf_iterator<char>(is_gs)), std::istreambuf_iterator<char>());
+
 	mProgramId = glCreateProgram();
 
 	unsigned int vs = GetCompiledShader(GL_VERTEX_SHADER, f_vs);
 	unsigned int fs = GetCompiledShader(GL_FRAGMENT_SHADER, f_fs);
+	unsigned int gs = GetCompiledShader(GL_GEOMETRY_SHADER, f_gs);
 
 	glAttachShader(mProgramId, vs);
 	glAttachShader(mProgramId, fs);
+	glAttachShader(mProgramId, gs);
 
 	glLinkProgram(mProgramId);
 	glValidateProgram(mProgramId);
@@ -64,6 +69,7 @@ bool ShaderUtil::load(const std::string& vertexShaderFile, const std::string& fr
 
 	glDeleteShader(vs);
 	glDeleteShader(fs);
+	glDeleteShader(gs);
 
 	return true;
 }
@@ -78,9 +84,9 @@ void ShaderUtil::stopProgram()
 	glUseProgram(NULL);
 }
 
-void ShaderUtil::getAttribLocation(const GLchar* attribute_name, GLint& location_out)
+GLint ShaderUtil::getAttribLocation(const GLchar* attribute_name)
 {
-	location_out = glGetAttribLocation(mProgramId, attribute_name);
+	return glGetAttribLocation(mProgramId, attribute_name);
 }
 
 void ShaderUtil::deleteProgram()

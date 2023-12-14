@@ -1,24 +1,10 @@
-#version 140
-#extension GL_ARB_explicit_attrib_location : enable
+#version 150 core
 
-layout(location = 0) out vec4 frag_colour;
+in vec3 fColor;
 
-uniform float radius;
-uniform vec2 position = vec2(400.0, 400.0);
-uniform vec4 color = vec4(1.0, 0.0, 0.0, 0.0);
-uniform vec4 borderColor = vec4(0.0, 0.0, 0.0, 0.0);
-uniform float borderThickness;
+out vec4 outColor;
 
 void main()
 {
-    float distanceX = abs(gl_FragCoord.x - position.x);
-    float distanceY = abs(gl_FragCoord.y - position.y);
-
-    if (sqrt(distanceX * distanceX + distanceY * distanceY) > radius)
-        discard;
-    else if (sqrt(distanceX * distanceX + distanceY * distanceY) <= radius &&
-        sqrt(distanceX * distanceX + distanceY * distanceY) >= radius - borderThickness)
-        frag_colour = borderColor;
-    else
-        frag_colour = color;
+    outColor = vec4(fColor, 1.0);
 }

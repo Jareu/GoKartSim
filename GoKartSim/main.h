@@ -17,6 +17,8 @@ bool init();
 //Initializes rendering program and clear color
 bool initGL();
 
+ImGuiIO& initImGui();
+
 //Input handler
 void handleKeys(unsigned char key, int x, int y);
 
@@ -29,8 +31,14 @@ void render();
 //Frees media and shuts down SDL
 void close();
 
-const int WINDOW_WIDTH = 800;
-const int WINDOW_HEIGHT = 600;
+void updateAspectRatio();
+
+void handleEvents();
+
+void renderUi(const ImGuiIO& io);
+
+int window_width = 800;
+int window_height = 600;
 ShaderUtil shaderUtil;
 
 //The window we'll be rendering to
@@ -46,5 +54,7 @@ bool gRenderQuad = true;
 GLuint gProgramID = 0;
 GLint gVertexPos2DLocation = -1;
 GLuint gVBO = 0;
-ImVec4 clear_color = ImVec4(0.0f, 0.0f, 0.2f, 1.0f);
+ImVec4 clear_color = ImVec4(0.0f, 0.0f, 0.15f, 1.0f);
 GLuint gIBO = 0;
+GLuint ar_param = -1;
+bool quit = false;
