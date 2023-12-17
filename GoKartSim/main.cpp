@@ -1,4 +1,5 @@
 #include <iostream>
+#include <chrono>
 
 #include "main.h"
 
@@ -149,6 +150,13 @@ void handleKeys(unsigned char key, int x, int y)
 void update()
 {
 	//No per frame update needed
+	std::chrono::time_point<std::chrono::system_clock> now = std::chrono::system_clock::now();
+	auto delta_seconds = std::chrono::duration<double>(now - last_update).count();
+
+	if (delta_seconds > 2.0) {
+		last_update = now;
+	}
+
 }
 
 void render()
