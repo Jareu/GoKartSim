@@ -3,7 +3,6 @@
 
 #include "main.h"
 
-#include "Universe.h"
 #include "globals.h"
 
 bool init()
@@ -154,6 +153,16 @@ void update()
 	auto delta_seconds = std::chrono::duration<double>(now - last_update).count();
 
 	if (delta_seconds > 2.0) {
+		float sides = std::round(universe->getNoise()->getRandom() * 125.f + 3.f);
+
+		GLfloat vertexData[] = {
+			0.0f, 0.0f, 1.0f, 1.0f, 0.0f, sides
+		};
+
+		glBindBuffer(GL_ARRAY_BUFFER, gVBO);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(vertexData), vertexData, GL_STATIC_DRAW);
+
+		std::cout << std::format("sides = {}", sides) << std::endl;
 		last_update = now;
 	}
 
