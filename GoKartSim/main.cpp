@@ -1,5 +1,4 @@
 #include <iostream>
-#include <chrono>
 
 #include "main.h"
 
@@ -100,17 +99,19 @@ bool initGL()
 	glBindVertexArray(vao);
 
 	// Specify layout of point data
-	auto posAttrib = shaderUtil.getAttribLocation("pos");
-	glEnableVertexAttribArray(posAttrib);
-	glVertexAttribPointer(posAttrib, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(float), 0);
+	// TODO: don't do this here. make race_data_size = 1 to begin with, and recalculate glVertexAttribPointer data when new karts are added to race
+	int number_of_karts = 0;
+	auto numKartsAttrib = shaderUtil.getAttribLocation("number_of_karts");
+	int position = 0;
+	glEnableVertexAttribArray(numKartsAttrib);
+	glVertexAttribPointer(numKartsAttrib, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)(position * sizeof(float)));
 
-	auto colAttrib = shaderUtil.getAttribLocation("color");
-	glEnableVertexAttribArray(colAttrib);
-	glVertexAttribPointer(colAttrib, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(2 * sizeof(float)));
-
-	auto sidesAttrib = shaderUtil.getAttribLocation("sides");
-	glEnableVertexAttribArray(sidesAttrib);
-	glVertexAttribPointer(sidesAttrib, 1, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(5 * sizeof(float)));
+	size_t race_data_size = (number_of_karts + 1) * sizeof(float);
+	position = 1;
+	auto raceDataAttrib = shaderUtil.getAttribLocation("race_Data");
+	glEnableVertexAttribArray(raceDataAttrib);
+	glVertexAttribPointer(raceDataAttrib, number_of_karts, GL_FLOAT, GL_FALSE, race_data_size, (void*)(position * sizeof(float)));
+	glBindVertexArray(0);
 
 	//Create IBO
 	glGenBuffers(1, &gIBO);
@@ -149,23 +150,14 @@ void handleKeys(unsigned char key, int x, int y)
 void update()
 {
 	//No per frame update needed
-	std::chrono::time_point<std::chrono::system_clock> now = std::chrono::system_clock::now();
-	auto delta_seconds = std::chrono::duration<double>(now - last_update).count();
+	universe->tick();
+	auto race_data = universe->getRaceData();
+	std::vector<GLfloat> gl_race_data {};
+	gl_race_data.emplace_back(static_cast<float> (race_data.size())); // number of karts
+	gl_race_data.insert(gl_race_data.end(), race_data.begin(), race_data.end()); // array of kart positions
 
-	if (delta_seconds > 2.0) {
-		float sides = std::round(universe->getNoise()->getRandom() * 125.f + 3.f);
-
-		GLfloat vertexData[] = {
-			0.0f, 0.0f, 1.0f, 1.0f, 0.0f, sides
-		};
-
-		glBindBuffer(GL_ARRAY_BUFFER, gVBO);
-		glBufferData(GL_ARRAY_BUFFER, sizeof(vertexData), vertexData, GL_STATIC_DRAW);
-
-		std::cout << std::format("sides = {}", sides) << std::endl;
-		last_update = now;
-	}
-
+	glBindBuffer(GL_ARRAY_BUFFER, gVBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * gl_race_data.size(), gl_race_data.data(), GL_STATIC_DRAW);
 }
 
 void render()

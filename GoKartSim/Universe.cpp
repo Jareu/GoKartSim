@@ -47,3 +47,10 @@ void Universe::tick()
 
 	last_tick_time_ = now;
 }
+
+std::vector<float> Universe::getRaceData()
+{
+	std::vector<float> race_data{};
+
+	return race_data;
+}

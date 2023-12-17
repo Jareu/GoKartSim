@@ -15,6 +15,7 @@ public:
 	double getGoKartProgress(uint8_t kart_number) const;
 	void spawnGoKart(uint8_t kart_number);
 	void tick();
+	std::vector<float> getRaceData();
 private:
 	std::shared_ptr<Noise> noise_;
 	std::unordered_map<uint8_t, GoKart> gokarts_;
