@@ -1,211 +1,321 @@
 #include <iostream>
+#include <chrono>
 
-#include <glew.h>
+#include "main.h"
 
-#include <SDL.h>
-#include <SDL_opengl.h>
-
-#include "imgui.h"
-#include "imgui_impl_sdl2.h"
-#include "imgui_impl_opengl3.h"
-
-#include "Universe.h"
 #include "globals.h"
 
-const int WINDOW_WIDTH = 800;
-const int WINDOW_HEIGHT = 600;
+bool init()
+{
+	//Initialize SDL
+	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0)
+	{
+		std::cerr << "SDL_Init Error: " << SDL_GetError() << std::endl;
+		return false;
+	}
 
-// Shader sources
-const GLchar* vertexSource = R"glsl(
-    #version 150 core
-    in vec2 position;
-    in vec3 color;
-    out vec3 Color;
-    void main()
-    {
-        Color = color;
-        gl_Position = vec4(position, 0.0, 1.0);
-    }
-)glsl";
-const GLchar* fragmentSource = R"glsl(
-    #version 150 core
-    in vec3 Color;
-    out vec4 outColor;
-    void main()
-    {
-        outColor = vec4(Color, 1.0);
-    }
-)glsl";
+	//Use OpenGL 3.1 core
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+
+	//Create window
+	window = SDL_CreateWindow("GoKart Simulator", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, window_width, window_height, SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+
+	if (window == nullptr)
+	{
+		std::cerr << "Window could not be created! SDL Error:" << SDL_GetError() << std::endl;
+		return false;
+	}
+
+	//Create context
+	gl_context = SDL_GL_CreateContext(window);
+	SDL_GL_MakeCurrent(window, gl_context);
+	SDL_GL_SetSwapInterval(1); // Enable vsync
+
+
+	if (gl_context == nullptr)
+	{
+		std::cerr << "OpenGL context could not be created! SDL Error:" << SDL_GetError() << std::endl;
+		return false;
+	}
+
+	//Initialize GLEW
+	glewExperimental = GL_TRUE;
+	GLenum glewError = glewInit();
+
+	if (glewError != GLEW_OK)
+	{
+		std::cerr << "Error initializing GLEW!" << glewGetErrorString(glewError) << std::endl;
+	}
+
+	//Use Vsync
+	if (SDL_GL_SetSwapInterval(1) < 0)
+	{
+		std::cerr << "Warning: Unable to set VSync! SDL Error:" << SDL_GetError() << std::endl;
+	}
+
+	//Initialize OpenGL
+	if (!initGL())
+	{
+		std::cerr << "Unable to initialize OpenGL!" << std::endl;
+		return false;
+	}
+
+	return true;
+}
+
+bool initGL()
+{
+	// load shaders
+	try {
+		shaderUtil.load("vs.shader", "fs.shader", "gs.shader");
+	}
+	catch (std::exception e)
+	{
+		std::cerr << e.what() << std::endl;
+		return false;
+	}
+
+	// Clear color buffer
+	glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
+
+	//VBO data
+	GLfloat vertexData[] = {
+		0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 32.f
+	};
+
+	//IBO data
+	GLuint indexData[] = { 0 };
+
+	//Create VBO
+	glGenBuffers(1, &gVBO);
+	glBindBuffer(GL_ARRAY_BUFFER, gVBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(vertexData), vertexData, GL_STATIC_DRAW);
+
+	// Create VAO
+	GLuint vao;
+	glGenVertexArrays(1, &vao);
+	glBindVertexArray(vao);
+
+	// Specify layout of point data
+	auto posAttrib = shaderUtil.getAttribLocation("pos");
+	glEnableVertexAttribArray(posAttrib);
+	glVertexAttribPointer(posAttrib, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(float), 0);
+
+	auto colAttrib = shaderUtil.getAttribLocation("color");
+	glEnableVertexAttribArray(colAttrib);
+	glVertexAttribPointer(colAttrib, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(2 * sizeof(float)));
+
+	auto sidesAttrib = shaderUtil.getAttribLocation("sides");
+	glEnableVertexAttribArray(sidesAttrib);
+	glVertexAttribPointer(sidesAttrib, 1, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(5 * sizeof(float)));
+
+	//Create IBO
+	glGenBuffers(1, &gIBO);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gIBO);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, 4 * sizeof(GLuint), indexData, GL_STATIC_DRAW);
+
+	ar_param = glGetUniformLocation(shaderUtil.getProgramId(), "fAspectRatio");
+
+	updateAspectRatio();
+	
+	return true;
+}
+
+ImGuiIO& initImGui()
+{
+	// Setup Dear ImGui context
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO(); (void)io;
+
+	// Setup Platform/Renderer bindings
+	ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
+	ImGui_ImplOpenGL3_Init("#version 150");
+	return io;
+}
+
+void handleKeys(unsigned char key, int x, int y)
+{
+	//Toggle quad
+	if (key == 'q')
+	{
+		gRenderQuad = !gRenderQuad;
+	}
+}
+
+void update()
+{
+	//No per frame update needed
+	std::chrono::time_point<std::chrono::system_clock> now = std::chrono::system_clock::now();
+	auto delta_seconds = std::chrono::duration<double>(now - last_update).count();
+
+	if (delta_seconds > 2.0) {
+		float sides = std::round(universe->getNoise()->getRandom() * 125.f + 3.f);
+
+		GLfloat vertexData[] = {
+			0.0f, 0.0f, 1.0f, 1.0f, 0.0f, sides
+		};
+
+		glBindBuffer(GL_ARRAY_BUFFER, gVBO);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(vertexData), vertexData, GL_STATIC_DRAW);
+
+		std::cout << std::format("sides = {}", sides) << std::endl;
+		last_update = now;
+	}
+
+}
+
+void render()
+{
+	glClear(GL_COLOR_BUFFER_BIT);
+
+	//Render quad
+	if (gRenderQuad)
+	{
+		//Bind program
+		shaderUtil.useProgram();
+		
+		glDrawArrays(GL_POINTS, 0, 4);
+
+		//Unbind program
+		shaderUtil.stopProgram();
+	}
+}
+
+void close()
+{
+	//Disable text input
+	SDL_StopTextInput();
+
+	// Cleanup ImGui
+	ImGui_ImplOpenGL3_Shutdown();
+	ImGui_ImplSDL2_Shutdown();
+	ImGui::DestroyContext();
+
+	shaderUtil.deleteProgram();
+
+	SDL_GL_DeleteContext(gl_context);
+
+	//Destroy window	
+	SDL_DestroyWindow(window);
+	window = nullptr;
+
+	//Quit SDL subsystems
+	SDL_Quit();
+
+}
+
+void updateAspectRatio()
+{
+	shaderUtil.useProgram();
+
+	if (ar_param != -1)
+	{
+		float aspect_ratio = static_cast<float>(window_height) / window_width;
+		glUniform1f(ar_param, aspect_ratio);
+	}
+	else {
+		std::cerr << "Couldn't get fAspectRatio! " << std::endl;
+	}
+
+	shaderUtil.stopProgram();
+}
+
+void handleEvents()
+{
+	SDL_Event event;
+
+	while (SDL_PollEvent(&event) != 0)
+	{
+		ImGui_ImplSDL2_ProcessEvent(&event);
+
+		//User requests quit
+		switch (event.type)
+		{
+		case SDL_QUIT:
+			quit = true;
+			break;
+		case SDL_TEXTINPUT:
+		{
+			int x = 0, y = 0;
+			SDL_GetMouseState(&x, &y);
+			handleKeys(event.text.text[0], x, y);
+			break;
+		}
+		case SDL_WINDOWEVENT:
+		{
+			if (event.window.event == SDL_WINDOWEVENT_RESIZED) {
+				window_width = event.window.data1;
+				window_height = event.window.data2;
+				updateAspectRatio();
+			}
+			break;
+		}
+		default:
+			break;
+		}
+	}
+}
+
+void renderUi(const ImGuiIO& io)
+{
+	// Start the Dear ImGui frame
+	ImGui_ImplOpenGL3_NewFrame();
+	ImGui_ImplSDL2_NewFrame(window);
+	ImGui::NewFrame();
+
+	// 1. Show a simple window.
+	// Tip: if we don't call ImGui::Begin()/ImGui::End() the widgets automatically appears in a window called "Debug".
+	{
+		constexpr float value = 1234.f;
+		char text1[128] = "";
+		char text2[128] = "";
+
+		ImGui::Text("Value = %f", value);                   // Display some text (you can use a format string too)
+		ImGui::InputText("string1", text1, IM_ARRAYSIZE(text1));   // Input text with a label
+		ImGui::Text("A second text object");                    // Another text object
+		ImGui::InputText("string2", text2, IM_ARRAYSIZE(text2));// Another input text
+	}
+
+	// Rendering
+	ImGui::Render();
+	glViewport(0, 0, static_cast<GLsizei> (io.DisplaySize.x), static_cast<GLsizei> (io.DisplaySize.y));
+	ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+	SDL_GL_MakeCurrent(window, gl_context);
+	SDL_GL_SwapWindow(window);
+}
 
 int main(int argc, char* argv[])
 {
-    // Initialize SDL
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
-        std::cerr << "SDL_Init Error: " << SDL_GetError() << std::endl;
-        return 1;
-    }
+	if (init() == false)
+	{
+		std::cerr << "Initialization failed!" << std::endl;
+		return EXIT_FAILURE;
+	}
 
-    // Use OpenGL 3.2 core
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
-
-    // Create a window
-    SDL_Window* window = SDL_CreateWindow("GoKartSim", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
-    SDL_GLContext gl_context = SDL_GL_CreateContext(window);
-    SDL_GL_MakeCurrent(window, gl_context);
-    SDL_GL_SetSwapInterval(1); // Enable vsync
-
-    // Initialize OpenGL loader
-    glewExperimental = GL_TRUE;
-    bool err = glewInit() != GLEW_OK;
-    if (err) {
-        std::cerr << "Failed to initialize OpenGL loader!" << std::endl;
-        return 1;
-    }
-
-
-
-    // Create Vertex Array Object
-    GLuint vao;
-    glGenVertexArrays(1, &vao);
-    glBindVertexArray(vao);
-
-    // Create a Vertex Buffer Object and copy the vertex data to it
-    GLuint vbo;
-    glGenBuffers(1, &vbo);
-
-    GLfloat vertices[] = {
-        -1.f,  1.f, 1.f, 0.f, 0.f, // Top-left
-         1.f,  1.f, 0.f, 1.f, 0.f, // Top-right
-         1.f, -1.f, 0.f, 0.f, 1.f, // Bottom-right
-        -1.f, -1.f, 1.f, 1.f, 1.f  // Bottom-left
-    };
-
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-
-    // Create an element array
-    GLuint ebo;
-    glGenBuffers(1, &ebo);
-
-    GLuint elements[] = {
-        0, 1, 2,
-        2, 3, 0
-    };
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(elements), elements, GL_STATIC_DRAW);
-
-    // Create and compile the vertex shader
-    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertexShader, 1, &vertexSource, NULL);
-    glCompileShader(vertexShader);
-
-    // Create and compile the fragment shader
-    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragmentShader, 1, &fragmentSource, NULL);
-    glCompileShader(fragmentShader);
-
-    // Link the vertex and fragment shader into a shader program
-    GLuint shaderProgram = glCreateProgram();
-    glAttachShader(shaderProgram, vertexShader);
-    glAttachShader(shaderProgram, fragmentShader);
-    glBindFragDataLocation(shaderProgram, 0, "outColor");
-    glLinkProgram(shaderProgram);
-    glUseProgram(shaderProgram);
-
-    // Specify the layout of the vertex data
-    GLint posAttrib = glGetAttribLocation(shaderProgram, "position");
-    glEnableVertexAttribArray(posAttrib);
-    glVertexAttribPointer(posAttrib, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), 0);
-
-    GLint colAttrib = glGetAttribLocation(shaderProgram, "color");
-    glEnableVertexAttribArray(colAttrib);
-    glVertexAttribPointer(colAttrib, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), (void*)(2 * sizeof(GLfloat)));
-
-
-
-
-
-
-
-    // Setup Dear ImGui context
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
-
-    // Setup Platform/Renderer bindings
-    ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
-    ImGui_ImplOpenGL3_Init("#version 150");
-
-    // Our state
-    bool show_demo_window = true;
-    bool show_another_window = false;
-    ImVec4 clear_color = ImVec4(0.0f, 0.0f, 0.2f, 1.0f);
-
-    Universe universe{ SEED };
-    universe.spawnGoKart(12);
-
-
-  
+	auto& io = initImGui();
+	universe = std::make_unique<Universe>(SEED);
+    universe->spawnGoKart(12);
+	  
     // Main loop
-    bool done = false;
-    while (!done) {
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            ImGui_ImplSDL2_ProcessEvent(&event);
-            if (event.type == SDL_QUIT)
-                done = true;
-        }
+	SDL_StartTextInput();
 
+    while (!quit) {
+		handleEvents();
+
+		update();
+         
         // Draw something
-
-
-        // Start the Dear ImGui frame
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplSDL2_NewFrame(window);
-        ImGui::NewFrame();
-
-        // 1. Show a simple window.
-        // Tip: if we don't call ImGui::Begin()/ImGui::End() the widgets automatically appears in a window called "Debug".
-        {
-            char text[128] = "";
-            char text2[128] = "";
-
-            ImGui::Text("Hello, world!");                           // Display some text (you can use a format string too)
-            ImGui::InputText("string", text, IM_ARRAYSIZE(text));   // Input text with a label
-            ImGui::Text("A second text object");                    // Another text object
-            ImGui::InputText("string2", text2, IM_ARRAYSIZE(text2));// Another input text
-        }
-
-        // Rendering
-        ImGui::Render();
-        SDL_GL_MakeCurrent(window, gl_context);
-        glViewport(0, 0, static_cast<GLsizei> (io.DisplaySize.x), static_cast<GLsizei> (io.DisplaySize.y));
-        glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w);
-        glClear(GL_COLOR_BUFFER_BIT);
-
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-        SDL_GL_SwapWindow(window);
+		render();
+		
+		renderUi(io);
     }
 
-    glDeleteProgram(shaderProgram);
-    glDeleteShader(fragmentShader);
-    glDeleteShader(vertexShader);
+	close();
 
-    // Cleanup
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
-    ImGui::DestroyContext();
-
-    SDL_GL_DeleteContext(gl_context);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
-
-    return 0;
+    return EXIT_SUCCESS;
 }
