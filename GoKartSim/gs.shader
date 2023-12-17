@@ -2,7 +2,7 @@
 #extension GL_ARB_explicit_attrib_location : enable
 
 layout(points) in;
-layout(line_strip, max_vertices = 64) out;
+layout(line_strip, max_vertices = 128) out;
 uniform float fAspectRatio;
 
 in vec3 vColor[];
