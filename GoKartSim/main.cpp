@@ -281,9 +281,8 @@ int main(int argc, char* argv[])
 	}
 
 	auto& io = initImGui();
-
-    Universe universe{ SEED };
-    universe.spawnGoKart(12);
+	universe = std::make_unique<Universe>(SEED);
+    universe->spawnGoKart(12);
 	  
     // Main loop
 	SDL_StartTextInput();

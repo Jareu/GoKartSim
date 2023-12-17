@@ -1,5 +1,6 @@
 #pragma once
 #include "ShaderUtil.h"
+#include "Universe.h"
 
 #include <glew.h>
 #include <glu.h>
@@ -58,3 +59,4 @@ ImVec4 clear_color = ImVec4(0.0f, 0.0f, 0.15f, 1.0f);
 GLuint gIBO = 0;
 GLuint ar_param = -1;
 bool quit = false;
+std::unique_ptr<Universe> universe;
