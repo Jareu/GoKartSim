@@ -2,7 +2,8 @@
 #include "globals.h"
 
 Universe::Universe(int seed) :
-	noise_{ std::make_shared<Noise>(seed) }
+	noise_{ std::make_shared<Noise>(seed) },
+	last_tick_time_{ std::chrono::system_clock::now() }
 {
 
 }
@@ -12,12 +13,13 @@ std::shared_ptr<Noise> Universe::getNoise()
 	return noise_;
 }
 
-void Universe::spawnGoKart(uint8_t kart_number)
+GoKart* Universe::spawnGoKart(uint8_t kart_number)
 {
-	GoKart new_kart = GoKart{ *this, kart_number, 0.0 };
-	new_kart.placeAtStartLine(gokarts_.size());
-	new_kart.setSpeed(PI / 100.0);
-	gokarts_.insert({ kart_number, new_kart });
+	auto new_kart = std::make_unique<GoKart>(*this, kart_number, 0.0);
+	new_kart->placeAtStartLine(gokarts_.size());
+	GoKart* kart_ptr = new_kart.get();
+	gokarts_.insert({ kart_number, std::move(new_kart) });
+	return kart_ptr;
 }
 
 double Universe::getGoKartProgress(uint8_t kart_number) const
@@ -36,11 +38,11 @@ void Universe::tick()
 	const auto now = std::chrono::system_clock::now();
 	auto seconds_elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - last_tick_time_).count() / 1'000'000.0;
 
-	std::unordered_map<uint8_t, GoKart>::iterator gokart_iterator = gokarts_.begin();
+	std::unordered_map<uint8_t, std::unique_ptr<GoKart>>::iterator gokart_iterator = gokarts_.begin();
 	while (gokart_iterator != gokarts_.end()) {
 		auto& gokart = gokart_iterator->second;
 
-		gokart.advance(seconds_elapsed);
+		gokart->advance(seconds_elapsed);
 
 		gokart_iterator++;
 	}
@@ -51,6 +53,13 @@ void Universe::tick()
 std::vector<float> Universe::getRaceData()
 {
 	std::vector<float> race_data{};
+
+	for (const auto& gokart : gokarts_)
+	{
+		race_data.emplace_back(
+			static_cast<float>(gokart.second->getProgress())
+		);
+	}
 
 	return race_data;
 }
