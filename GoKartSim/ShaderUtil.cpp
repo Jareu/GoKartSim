@@ -40,41 +40,41 @@ unsigned int ShaderUtil::GetCompiledShader(unsigned int shader_type, const std::
 void ShaderUtil::handleProgramError(const std::string& message)
 {
 	int length;
-	glGetProgramiv(mProgramId_, GL_INFO_LOG_LENGTH, &length);
+	glGetProgramiv(shader_program_, GL_INFO_LOG_LENGTH, &length);
 
 	std::string logs;
 	logs.resize(length);
-	glGetProgramInfoLog(mProgramId_, length, &length, &logs[0]);
-	throw std::exception{ std::format("{} in program {}: \"{}\"\n", message, mProgramId_, logs).c_str() };
+	glGetProgramInfoLog(shader_program_, length, &length, &logs[0]);
+	throw std::exception{ std::format("{} in program {}: \"{}\"\n", message, shader_program_, logs).c_str() };
 }
 
 bool ShaderUtil::load(const std::string& vertexShaderFile, const std::string& fragmentShaderFile, const std::string& geometryShaderFile)
 {
-	mProgramId_ = glCreateProgram();
+	shader_program_ = glCreateProgram();
 
-	unsigned int vs = GetCompiledShader(GL_VERTEX_SHADER, vertexShaderFile);
-	unsigned int fs = GetCompiledShader(GL_FRAGMENT_SHADER, fragmentShaderFile);
-	unsigned int gs = GetCompiledShader(GL_GEOMETRY_SHADER, geometryShaderFile);
+	vert_shader_ = GetCompiledShader(GL_VERTEX_SHADER, vertexShaderFile);
+	frag_shader_ = GetCompiledShader(GL_FRAGMENT_SHADER, fragmentShaderFile);
+	geom_shader_ = GetCompiledShader(GL_GEOMETRY_SHADER, geometryShaderFile);
 
-	if (vs)
+	if (vert_shader_)
 	{
-		glAttachShader(mProgramId_, vs);
+		glAttachShader(shader_program_, vert_shader_);
 	}
 
-	if (fs)
+	if (frag_shader_)
 	{
-		glAttachShader(mProgramId_, fs);
+		glAttachShader(shader_program_, frag_shader_);
 	}
 
-	if (gs)
+	if (geom_shader_)
 	{
-		glAttachShader(mProgramId_, gs);
+		glAttachShader(shader_program_, geom_shader_);
 	}
 
-	glLinkProgram(mProgramId_);
+	glLinkProgram(shader_program_);
 
 	GLint linked;
-	glGetProgramiv(mProgramId_, GL_LINK_STATUS, &linked);
+	glGetProgramiv(shader_program_, GL_LINK_STATUS, &linked);
 
 	if (!linked)
 	{
@@ -82,18 +82,18 @@ bool ShaderUtil::load(const std::string& vertexShaderFile, const std::string& fr
 	}
 
 
-	glValidateProgram(mProgramId_);
+	glValidateProgram(shader_program_);
 
-	glDeleteShader(vs);
-	glDeleteShader(fs);
-	glDeleteShader(gs);
+	glDeleteShader(vert_shader_);
+	glDeleteShader(frag_shader_);
+	glDeleteShader(geom_shader_);
 
 	return true;
 }
 
 void ShaderUtil::useProgram()
 {
-	glUseProgram(mProgramId_);
+	glUseProgram(shader_program_);
 }
 
 void ShaderUtil::stopProgram()
@@ -103,16 +103,21 @@ void ShaderUtil::stopProgram()
 
 GLint ShaderUtil::getAttribLocation(const GLchar* attribute_name)
 {
-	GLint attribLocation = glGetAttribLocation(mProgramId_, attribute_name);
+	GLint attribLocation = glGetAttribLocation(shader_program_, attribute_name);
 	return attribLocation;
 }
 
-void ShaderUtil::deleteProgram()
+void ShaderUtil::cleanUp()
 {
-	glDeleteProgram(mProgramId_);
+	glUseProgram(0);
+	glDisableVertexAttribArray(0);
+	glDetachShader(shader_program_, vert_shader_);
+	glDetachShader(shader_program_, frag_shader_);
+	glDetachShader(shader_program_, geom_shader_);
+	glDeleteProgram(shader_program_);
 }
 
 GLuint ShaderUtil::getProgramId() const
 {
-	return mProgramId_;
+	return shader_program_;
 }
