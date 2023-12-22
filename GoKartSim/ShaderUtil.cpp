@@ -107,6 +107,12 @@ GLint ShaderUtil::getAttribLocation(const GLchar* attribute_name)
 	return attribLocation;
 }
 
+GLint ShaderUtil::getUniformLocation(const GLchar* uniform_name)
+{
+	GLint uniformLocation = glGetUniformLocation(shader_program_, uniform_name);
+	return uniformLocation;
+}
+
 void ShaderUtil::cleanUp()
 {
 	glUseProgram(0);

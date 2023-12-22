@@ -13,6 +13,7 @@ public:
 	void stopProgram();
 	void cleanUp();
 	GLint getAttribLocation(const GLchar* attribute_name);
+	GLint getUniformLocation(const GLchar* uniform_name);
 	GLuint getProgramId() const;
 private:
 	unsigned int GetCompiledShader(unsigned int shader_type, const std::string& shader_source);

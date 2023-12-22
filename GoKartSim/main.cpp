@@ -140,14 +140,15 @@ bool initShaders()
         return false;
     }
 
-    GLint status;
-    char err_buf[512];
 
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
 
     // Compile vertex shader
     /*
+    GLint status;
+    char err_buf[512];
+
     vert_shader = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vert_shader, 1, &vert_shader_src, NULL);
     glCompileShader(vert_shader);
@@ -184,9 +185,9 @@ bool initShaders()
     glUseProgram(shader_prog);
     */
 
-    //ar_param = shaderUtil->getAttribLocation("fAspectRatio");
+    ar_param = shaderUtil->getUniformLocation("aspect_ratio");
 
-    //updateAspectRatio();
+    updateAspectRatio();
 
     return true;
 }
@@ -240,7 +241,7 @@ bool initTextures()
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 256, 256, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
-    glUniform1i(glGetUniformLocation(shaderUtil->getProgramId(), "tex"), 0);
+    glUniform1i(shaderUtil->getUniformLocation("tex"), 0);
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
@@ -349,6 +350,8 @@ void close()
 
 void updateAspectRatio()
 {
+    glViewport(0, 0, window_width, window_height);
+
     shaderUtil->useProgram();
 
     if (ar_param != -1)
@@ -389,7 +392,7 @@ void handleEvents()
             if (event.window.event == SDL_WINDOWEVENT_RESIZED) {
                 window_width = event.window.data1;
                 window_height = event.window.data2;
-                //updateAspectRatio();
+                updateAspectRatio();
             }
             break;
         }
