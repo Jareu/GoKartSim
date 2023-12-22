@@ -4,8 +4,15 @@
 #include <fstream>
 #include <format>
 
-unsigned int ShaderUtil::GetCompiledShader(unsigned int shader_type, const std::string& shader_source)
+unsigned int ShaderUtil::GetCompiledShader(unsigned int shader_type, const std::string& shader_filename)
 {
+	if (shader_filename.empty()) {
+		return GL_FALSE;
+	}
+
+	std::ifstream shader_file(shader_filename);
+	const std::string shader_source((std::istreambuf_iterator<char>(shader_file)), std::istreambuf_iterator<char>());
+
 	unsigned int shader_id = glCreateShader(shader_type);
 
 	const char* c_source = shader_source.c_str();
@@ -30,42 +37,52 @@ unsigned int ShaderUtil::GetCompiledShader(unsigned int shader_type, const std::
 	return shader_id;
 }
 
+void ShaderUtil::handleProgramError(const std::string& message)
+{
+	int length;
+	glGetProgramiv(mProgramId_, GL_INFO_LOG_LENGTH, &length);
+
+	std::string logs;
+	logs.resize(length);
+	glGetProgramInfoLog(mProgramId_, length, &length, &logs[0]);
+	throw std::exception{ std::format("{} in program {}: \"{}\"\n", message, mProgramId_, logs).c_str() };
+}
+
 bool ShaderUtil::load(const std::string& vertexShaderFile, const std::string& fragmentShaderFile, const std::string& geometryShaderFile)
 {
-	std::ifstream is_vs(vertexShaderFile);
-	const std::string f_vs((std::istreambuf_iterator<char>(is_vs)), std::istreambuf_iterator<char>());
+	mProgramId_ = glCreateProgram();
 
-	std::ifstream is_fs(fragmentShaderFile);
-	const std::string f_fs((std::istreambuf_iterator<char>(is_fs)), std::istreambuf_iterator<char>());
+	unsigned int vs = GetCompiledShader(GL_VERTEX_SHADER, vertexShaderFile);
+	unsigned int fs = GetCompiledShader(GL_FRAGMENT_SHADER, fragmentShaderFile);
+	unsigned int gs = GetCompiledShader(GL_GEOMETRY_SHADER, geometryShaderFile);
 
-	std::ifstream is_gs(geometryShaderFile);
-	const std::string f_gs((std::istreambuf_iterator<char>(is_gs)), std::istreambuf_iterator<char>());
-
-	mProgramId = glCreateProgram();
-
-	unsigned int vs = GetCompiledShader(GL_VERTEX_SHADER, f_vs);
-	unsigned int fs = GetCompiledShader(GL_FRAGMENT_SHADER, f_fs);
-	unsigned int gs = GetCompiledShader(GL_GEOMETRY_SHADER, f_gs);
-
-	glAttachShader(mProgramId, vs);
-	glAttachShader(mProgramId, fs);
-	glAttachShader(mProgramId, gs);
-
-	glLinkProgram(mProgramId);
-	glValidateProgram(mProgramId);
-
-	GLint programSuccess = GL_TRUE;
-	glGetProgramiv(mProgramId, GL_LINK_STATUS, &programSuccess);
-	if (programSuccess != GL_TRUE)
+	if (vs)
 	{
-		int length;
-		glGetProgramiv(mProgramId, GL_INFO_LOG_LENGTH, &length);
-
-		auto strInfoLog = std::make_unique<GLchar[]>(length + 1);
-		glGetProgramInfoLog(mProgramId, length, &length, strInfoLog.get());
-
-		throw std::exception{ std::format("Error linking program %d: %s\n", mProgramId, strInfoLog.get()).c_str() };
+		glAttachShader(mProgramId_, vs);
 	}
+
+	if (fs)
+	{
+		glAttachShader(mProgramId_, fs);
+	}
+
+	if (gs)
+	{
+		glAttachShader(mProgramId_, gs);
+	}
+
+	glLinkProgram(mProgramId_);
+
+	GLint linked;
+	glGetProgramiv(mProgramId_, GL_LINK_STATUS, &linked);
+
+	if (!linked)
+	{
+		handleProgramError("Linker error");
+	}
+
+
+	glValidateProgram(mProgramId_);
 
 	glDeleteShader(vs);
 	glDeleteShader(fs);
@@ -76,7 +93,7 @@ bool ShaderUtil::load(const std::string& vertexShaderFile, const std::string& fr
 
 void ShaderUtil::useProgram()
 {
-	glUseProgram(mProgramId);
+	glUseProgram(mProgramId_);
 }
 
 void ShaderUtil::stopProgram()
@@ -86,15 +103,16 @@ void ShaderUtil::stopProgram()
 
 GLint ShaderUtil::getAttribLocation(const GLchar* attribute_name)
 {
-	return glGetAttribLocation(mProgramId, attribute_name);
+	GLint attribLocation = glGetAttribLocation(mProgramId_, attribute_name);
+	return attribLocation;
 }
 
 void ShaderUtil::deleteProgram()
 {
-	glDeleteProgram(mProgramId);
+	glDeleteProgram(mProgramId_);
 }
 
 GLuint ShaderUtil::getProgramId() const
 {
-	return mProgramId;
+	return mProgramId_;
 }

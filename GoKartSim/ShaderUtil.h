@@ -16,5 +16,6 @@ public:
 	GLuint getProgramId() const;
 private:
 	unsigned int GetCompiledShader(unsigned int shader_type, const std::string& shader_source);
-	GLuint mProgramId;
+	void handleProgramError(const std::string& message);
+	GLuint mProgramId_;
 };

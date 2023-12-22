@@ -48,15 +48,13 @@ SDL_Window* window = nullptr;
 //OpenGL context
 SDL_GLContext gl_context;
 
-//Render flag
-bool gRenderQuad = true;
-
 //Graphics program
 GLuint gProgramID = 0;
 GLint gVertexPos2DLocation = -1;
-GLuint gVBO = 0;
 ImVec4 clear_color = ImVec4(0.0f, 0.0f, 0.15f, 1.0f);
 GLuint gIBO = 0;
+GLuint gVAO = 0;
+GLuint gRaceDataBuffer = 0;
 GLuint ar_param = -1;
 bool quit = false;
 inline std::unique_ptr<Universe> universe;

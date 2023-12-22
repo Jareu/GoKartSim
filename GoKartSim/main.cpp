@@ -1,8 +1,22 @@
-#include <iostream>
+﻿#include <iostream>
 
 #include "main.h"
 
 #include "globals.h"
+
+void GLAPIENTRY
+GlErrorCallback(GLenum source,
+	GLenum type,
+	GLuint id,
+	GLenum severity,
+	GLsizei length,
+	const GLchar* message,
+	const void* userParam)
+{
+	fprintf(stderr, "GL CALLBACK: %s type = 0x%x, severity = 0x%x, message = %s\n",
+		(type == GL_DEBUG_TYPE_ERROR ? "** GL ERROR **" : ""),
+		type, severity, message);
+}
 
 bool init()
 {
@@ -16,7 +30,7 @@ bool init()
 	//Use OpenGL 3.1 core
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 
 	//Create window
@@ -67,9 +81,13 @@ bool init()
 
 bool initGL()
 {
+
+	glEnable(GL_DEBUG_OUTPUT);
+	glDebugMessageCallback(GlErrorCallback, 0);
+
 	// load shaders
 	try {
-		shaderUtil.load("vs.shader", "fs.shader", "gs.shader");
+		shaderUtil.load("vs.shader", "fs.shader", "");
 	}
 	catch (std::exception e)
 	{
@@ -77,41 +95,15 @@ bool initGL()
 		return false;
 	}
 
+
 	// Clear color buffer
 	glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
 
-	//VBO data
-	GLfloat vertexData[] = {
-		0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 32.f
-	};
+	glGenVertexArrays(1, &gVAO);
+	glBindVertexArray(gVAO);
 
 	//IBO data
 	GLuint indexData[] = { 0 };
-
-	//Create VBO
-	glGenBuffers(1, &gVBO);
-	glBindBuffer(GL_ARRAY_BUFFER, gVBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(vertexData), vertexData, GL_STATIC_DRAW);
-
-	// Create VAO
-	GLuint vao;
-	glGenVertexArrays(1, &vao);
-	glBindVertexArray(vao);
-
-	// Specify layout of point data
-	// TODO: don't do this here. make race_data_size = 1 to begin with, and recalculate glVertexAttribPointer data when new karts are added to race
-	int number_of_karts = 0;
-	auto numKartsAttrib = shaderUtil.getAttribLocation("number_of_karts");
-	int position = 0;
-	glEnableVertexAttribArray(numKartsAttrib);
-	glVertexAttribPointer(numKartsAttrib, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)(position * sizeof(float)));
-
-	size_t race_data_size = (number_of_karts + 1) * sizeof(float);
-	position = 1;
-	auto raceDataAttrib = shaderUtil.getAttribLocation("race_Data");
-	glEnableVertexAttribArray(raceDataAttrib);
-	glVertexAttribPointer(raceDataAttrib, number_of_karts, GL_FLOAT, GL_FALSE, race_data_size, (void*)(position * sizeof(float)));
-	glBindVertexArray(0);
 
 	//Create IBO
 	glGenBuffers(1, &gIBO);
@@ -143,38 +135,39 @@ void handleKeys(unsigned char key, int x, int y)
 	//Toggle quad
 	if (key == 'q')
 	{
-		gRenderQuad = !gRenderQuad;
+		// Do Q things
 	}
 }
 
 void update()
 {
+	std::vector<float> gl_race_data{};
+
 	//No per frame update needed
 	universe->tick();
-	auto race_data = universe->getRaceData();
-	std::vector<GLfloat> gl_race_data {};
-	gl_race_data.emplace_back(static_cast<float> (race_data.size())); // number of karts
-	gl_race_data.insert(gl_race_data.end(), race_data.begin(), race_data.end()); // array of kart positions
 
-	glBindBuffer(GL_ARRAY_BUFFER, gVBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * gl_race_data.size(), gl_race_data.data(), GL_STATIC_DRAW);
+	auto race_data = universe->getRaceData();
+	int num_karts = race_data.size();
+
+	glBindBuffer(GL_UNIFORM_BUFFER, gRaceDataBuffer);
+	glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(GLfloat) * num_karts, race_data.data());
+	glBufferSubData(GL_UNIFORM_BUFFER, sizeof(GLfloat) * 64, sizeof(int), &num_karts);
+	glBindBuffer(GL_UNIFORM_BUFFER, 0);
 }
 
 void render()
 {
 	glClear(GL_COLOR_BUFFER_BIT);
 
-	//Render quad
-	if (gRenderQuad)
-	{
-		//Bind program
-		shaderUtil.useProgram();
+	//Bind program
+	shaderUtil.useProgram();
 		
-		glDrawArrays(GL_POINTS, 0, 4);
+	glBindVertexArray(gVAO);
+	glDrawArrays(GL_POINTS, 0, 1);
+	glBindVertexArray(0);
 
-		//Unbind program
-		shaderUtil.stopProgram();
-	}
+	//Unbind program
+	shaderUtil.stopProgram();
 }
 
 void close()
@@ -186,6 +179,10 @@ void close()
 	ImGui_ImplOpenGL3_Shutdown();
 	ImGui_ImplSDL2_Shutdown();
 	ImGui::DestroyContext();
+
+	glDeleteVertexArrays(1, &gVAO);
+	glDeleteVertexArrays(1, &gIBO);
+	glDeleteBuffers(1, &gRaceDataBuffer);
 
 	shaderUtil.deleteProgram();
 
@@ -291,7 +288,21 @@ int main(int argc, char* argv[])
 
 	auto& io = initImGui();
 	universe = std::make_unique<Universe>(SEED);
-    universe->spawnGoKart(12);
+	// spawn 3 karts with default speed of 1.0
+	constexpr double DEFAULT_SPEED = 1.0;
+
+	for (int i=1; i<4; i++)
+	{
+		auto new_kart = universe->spawnGoKart(i);
+		new_kart->setSpeed(DEFAULT_SPEED * i * 0.1f);
+
+		glGenBuffers(1, &gRaceDataBuffer);
+		glBindBuffer(GL_UNIFORM_BUFFER, gRaceDataBuffer);
+		glBufferData(GL_UNIFORM_BUFFER, sizeof(float) * 64 + sizeof(int), nullptr, GL_DYNAMIC_DRAW);
+		glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+		glBindBufferBase(GL_UNIFORM_BUFFER, 0, gRaceDataBuffer);
+	}
 	  
     // Main loop
 	SDL_StartTextInput();

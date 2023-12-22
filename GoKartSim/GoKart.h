@@ -16,6 +16,8 @@ public:
 	void setSpeed(double speed);
 	void placeAtStartLine(uint8_t starting_position);
 private:
+	const float DRIVER_FACTOR_SCALE = 1000.f;
+	const float NOISE_SPEED_FACTOR = 0.25f;
 	uint8_t kart_number_;
 	double progress_;
 	double lifetime_;

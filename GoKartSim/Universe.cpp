@@ -13,6 +13,22 @@ std::shared_ptr<Noise> Universe::getNoise()
 	return noise_;
 }
 
+size_t Universe::getGoKartCount() const
+{
+	return gokarts_.size();
+}
+
+std::vector<uint8_t> Universe::getGoKartNumbers() const
+{
+	std::vector<uint8_t> gokart_ids;
+
+	for (auto it = begin(gokarts_); it != end(gokarts_); ++it) {
+		gokart_ids.emplace_back(it->first);
+	}
+
+	return gokart_ids;
+}
+
 GoKart* Universe::spawnGoKart(uint8_t kart_number)
 {
 	auto new_kart = std::make_unique<GoKart>(*this, kart_number, 0.0);
@@ -30,7 +46,7 @@ double Universe::getGoKartProgress(uint8_t kart_number) const
 		return 0.0;
 	}
 
-	return find_gokart->second.getProgress();
+	return find_gokart->second->getProgress();
 }
 
 void Universe::tick()
