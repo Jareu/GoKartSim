@@ -53,6 +53,7 @@ GLuint gProgramID = 0;
 GLint gVertexPos2DLocation = -1;
 ImVec4 clear_color = ImVec4(0.0f, 0.0f, 0.15f, 1.0f);
 GLuint gIBO = 0;
+GLuing gVBO = 0;
 GLuint gVAO = 0;
 GLuint gRaceDataBuffer = 0;
 GLuint ar_param = -1;

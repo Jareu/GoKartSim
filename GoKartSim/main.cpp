@@ -162,9 +162,19 @@ void render()
 	//Bind program
 	shaderUtil.useProgram();
 		
-	glBindVertexArray(gVAO);
-	glDrawArrays(GL_POINTS, 0, 1);
-	glBindVertexArray(0);
+	//Enable vertex position
+	glEnableVertexAttribArray(gVertexPos2DLocation);
+
+	//Set vertex data
+	glBindBuffer(GL_ARRAY_BUFFER, gVBO);
+	glVertexAttribPointer(gVertexPos2DLocation, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(GLfloat), nullptr);
+
+	//Set index data and render
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gIBO);
+	glDrawElements(GL_TRIANGLE_FAN, 4, GL_UNSIGNED_INT, nullptr);
+
+	//Disable vertex position
+	glDisableVertexAttribArray(gVertexPos2DLocation);
 
 	//Unbind program
 	shaderUtil.stopProgram();
