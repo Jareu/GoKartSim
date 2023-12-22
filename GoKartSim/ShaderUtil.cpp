@@ -81,7 +81,6 @@ bool ShaderUtil::load(const std::string& vertexShaderFile, const std::string& fr
 		handleProgramError("Linker error");
 	}
 
-
 	glValidateProgram(shader_program_);
 
 	glDeleteShader(vert_shader_);

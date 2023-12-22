@@ -144,47 +144,6 @@ bool initShaders()
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
 
-    // Compile vertex shader
-    /*
-    GLint status;
-    char err_buf[512];
-
-    vert_shader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vert_shader, 1, &vert_shader_src, NULL);
-    glCompileShader(vert_shader);
-    glGetShaderiv(vert_shader, GL_COMPILE_STATUS, &status);
-    if (status != GL_TRUE) {
-        glGetShaderInfoLog(vert_shader, sizeof(err_buf), NULL, err_buf);
-        err_buf[sizeof(err_buf) - 1] = '\0';
-        fprintf(stderr, "Vertex shader compilation failed: %s\n", err_buf);
-        return 1;
-    }
-    */
-
-    // Compile fragment shader
-    /*
-    frag_shader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(frag_shader, 1, &frag_shader_src, NULL);
-    glCompileShader(frag_shader);
-    glGetShaderiv(frag_shader, GL_COMPILE_STATUS, &status);
-    if (status != GL_TRUE) {
-        glGetShaderInfoLog(frag_shader, sizeof(err_buf), NULL, err_buf);
-        err_buf[sizeof(err_buf) - 1] = '\0';
-        fprintf(stderr, "Fragment shader compilation failed: %s\n", err_buf);
-        return 1;
-    }
-    */
-
-    // Link vertex and fragment shaders
-    /*
-    shader_prog = glCreateProgram();
-    glAttachShader(shader_prog, vert_shader);
-    glAttachShader(shader_prog, frag_shader);
-    glBindFragDataLocation(shader_prog, 0, "out_Color");
-    glLinkProgram(shader_prog);
-    glUseProgram(shader_prog);
-    */
-
     ar_param = shaderUtil->getUniformLocation("aspect_ratio");
 
     updateAspectRatio();
@@ -301,22 +260,6 @@ void render()
 
     //Bind program
     shaderUtil->useProgram();
-
-    /*
-    //Enable vertex position
-    glEnableVertexAttribArray(gVertexPos2DLocation);
-
-    //Set vertex data
-    glBindBuffer(GL_ARRAY_BUFFER, gVBO);
-    glVertexAttribPointer(gVertexPos2DLocation, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(GLfloat), nullptr);
-
-    //Set index data and render
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gIBO);
-    glDrawElements(GL_TRIANGLE_FAN, 4, GL_UNSIGNED_INT, nullptr);
-
-    //Disable vertex position
-    glDisableVertexAttribArray(gVertexPos2DLocation);
-    */
 
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, NULL);
 
