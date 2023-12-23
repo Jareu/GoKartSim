@@ -71,6 +71,7 @@ bool ShaderUtil::load(const std::string& vertexShaderFile, const std::string& fr
 		glAttachShader(shader_program_, geom_shader_);
 	}
 
+	glBindFragDataLocation(shader_program_, 0, "out_Color"); // ?
 	glLinkProgram(shader_program_);
 
 	GLint linked;

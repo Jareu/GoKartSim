@@ -246,12 +246,10 @@ void update()
     auto race_data = universe->getRaceData();
     int num_karts = race_data.size();
 
-    /*
-    glBindBuffer(GL_UNIFORM_BUFFER, gRaceDataBuffer);
-    glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(GLfloat) * num_karts, race_data.data());
-    glBufferSubData(GL_UNIFORM_BUFFER, sizeof(GLfloat) * 64, sizeof(int), &num_karts);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, gRaceDataBuffer); // bind buffer
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(GLfloat) * num_karts, race_data.data());
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, gRaceDataBuffer);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
-    */
 }
 
 void render()
@@ -276,7 +274,7 @@ void close()
 	ImGui_ImplSDL2_Shutdown();
 	ImGui::DestroyContext();
 
-	//glDeleteBuffers(1, &gRaceDataBuffer);
+	glDeleteBuffers(1, &gRaceDataBuffer);
 
 	shaderUtil->cleanUp();
 
@@ -390,13 +388,12 @@ int main(int argc, char* argv[])
 	{
 		auto new_kart = universe->spawnGoKart(i);
 		new_kart->setSpeed(DEFAULT_SPEED * i * 0.1f);
-
+        
 		glGenBuffers(1, &gRaceDataBuffer);
-		glBindBuffer(GL_UNIFORM_BUFFER, gRaceDataBuffer);
-		glBufferData(GL_UNIFORM_BUFFER, sizeof(float) * 64 + sizeof(int), nullptr, GL_DYNAMIC_DRAW);
-		glBindBuffer(GL_UNIFORM_BUFFER, 0);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, gRaceDataBuffer);
+		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLfloat) * universe->getGoKartCount(), nullptr, GL_DYNAMIC_COPY);
 
-		glBindBufferBase(GL_UNIFORM_BUFFER, 0, gRaceDataBuffer);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 	}
 	  
     // Main loop
