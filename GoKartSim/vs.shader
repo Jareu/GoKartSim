@@ -1,15 +1,11 @@
-#version 150 core
+#version 430 core
 
-in vec2 pos;
-in vec3 color;
-in float sides;
-
-out vec3 vColor;
-out float vSides;
+in vec2 in_Position;
+in vec2 in_Texcoord;
+out vec2 Texcoord;
 
 void main()
 {
-    gl_Position = vec4(pos, 0.0, 1.0);
-    vColor = color;
-    vSides = sides;
+    Texcoord = in_Texcoord;
+    gl_Position = vec4(in_Position, 0.0, 1.0);
 }

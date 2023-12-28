@@ -16,10 +16,12 @@ float Noise::getRandom()
 
 float Noise::getNoise2D(float x, float y) const
 {
-	return noise_->GenSingle2D(x, y, seed_);
+	float noise_val = noise_->GenSingle2D(x, y, seed_);
+	return noise_val;
 }
 
 float Noise::getNoise3D(float x, float y, float z) const
 {
-	return noise_->GenSingle3D(x, y, z, seed_);
+	float noise_val = noise_->GenSingle3D(x, y, z, seed_);
+	return noise_val;
 }

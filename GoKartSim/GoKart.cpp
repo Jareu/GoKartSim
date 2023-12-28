@@ -13,7 +13,7 @@ GoKart::GoKart(Universe& universe, uint8_t kart_number, double progress) :
 	lifetime_{ 0.0 },
 	speed_{ 0.0 }
 {
-	driver_factor_ = universe_.getNoise()->getRandom();
+	driver_factor_ = universe_.getNoise()->getRandom() * DRIVER_FACTOR_SCALE;
 	std::cout << std::setprecision(3) << "driver factor: " << driver_factor_ << std::endl;
 }
 
@@ -35,8 +35,8 @@ void GoKart::setSpeed(double speed)
 void GoKart::advance(double delta_seconds)
 {
 	lifetime_ += delta_seconds;
-	float noise_val = universe_.getNoise()->getNoise2D(lifetime_, driver_factor_);
-	progress_ = std::fmod(progress_ + (delta_seconds * speed_) * noise_val, PI);
+	float noise_val = 1.f - (universe_.getNoise()->getNoise2D(lifetime_, driver_factor_) + 1.f) * 0.5f * NOISE_SPEED_FACTOR;
+	progress_ = std::fmod(progress_ + (delta_seconds * speed_) * noise_val, TWO_PI);
 }
 
 uint8_t GoKart::getKartNumber() const

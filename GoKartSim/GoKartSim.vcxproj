@@ -163,6 +163,7 @@
     <ClInclude Include="$(SolutionDir)\libraries\imgui\imstb_truetype.h" />
     <ClInclude Include="globals.h" />
     <ClInclude Include="GoKart.h" />
+    <ClInclude Include="logo.h" />
     <ClInclude Include="main.h" />
     <ClInclude Include="Noise.h" />
     <ClInclude Include="ShaderUtil.h" />

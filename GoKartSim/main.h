@@ -11,12 +11,14 @@
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_opengl3.h"
 
-
 //Starts up SDL, creates window, and initializes OpenGL
-bool init();
+bool initialize();
 
 //Initializes rendering program and clear color
-bool initGL();
+bool initializeGl();
+bool initShaders();
+bool initGeometry();
+bool initTextures();
 
 ImGuiIO& initImGui();
 
@@ -40,24 +42,18 @@ void renderUi(const ImGuiIO& io);
 
 int window_width = 800;
 int window_height = 600;
-ShaderUtil shaderUtil;
 
-//The window we'll be rendering to
 SDL_Window* window = nullptr;
-
-//OpenGL context
 SDL_GLContext gl_context;
 
-//Render flag
-bool gRenderQuad = true;
-
 //Graphics program
-GLuint gProgramID = 0;
-GLint gVertexPos2DLocation = -1;
-GLuint gVBO = 0;
 ImVec4 clear_color = ImVec4(0.0f, 0.0f, 0.15f, 1.0f);
-GLuint gIBO = 0;
-GLuint ar_param = -1;
+GLint resolution_param = -1;
+GLuint gRaceDataBuffer = 0;
 bool quit = false;
-std::chrono::time_point<std::chrono::system_clock> last_update;
-std::unique_ptr<Universe> universe;
+inline std::unique_ptr<Universe> universe;
+inline std::unique_ptr <ShaderUtil> shaderUtil;
+
+GLuint         vao, vbo, ebo, tex;
+GLuint         vert_shader;
+GLuint         frag_shader;
