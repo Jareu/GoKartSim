@@ -144,7 +144,7 @@ bool initShaders()
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
 
-    ar_param = shaderUtil->getUniformLocation("aspect_ratio");
+    resolution_param = shaderUtil->getUniformLocation("resolution");
 
     updateAspectRatio();
 
@@ -295,13 +295,12 @@ void updateAspectRatio()
 
     shaderUtil->useProgram();
 
-    if (ar_param != -1)
+    if (resolution_param != -1)
     {
-        float aspect_ratio = static_cast<float>(window_height) / window_width;
-        glUniform1f(ar_param, aspect_ratio);
+        glUniform2f(resolution_param, static_cast<float>(window_width), static_cast<float>(window_height));
     }
     else {
-        std::cerr << "Couldn't get fAspectRatio! " << std::endl;
+        std::cerr << "Couldn't get resolution! " << std::endl;
     }
 
     shaderUtil->stopProgram();

@@ -48,7 +48,7 @@ SDL_GLContext gl_context;
 
 //Graphics program
 ImVec4 clear_color = ImVec4(0.0f, 0.0f, 0.15f, 1.0f);
-GLint ar_param = -1;
+GLint resolution_param = -1;
 GLuint gRaceDataBuffer = 0;
 bool quit = false;
 inline std::unique_ptr<Universe> universe;
