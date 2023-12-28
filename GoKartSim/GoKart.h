@@ -1,5 +1,7 @@
 #pragma once
 #include <cstdint>
+#include <memory>
+#include "Controller.h"
 
 class Universe;
 
@@ -24,4 +26,5 @@ private:
 	double speed_;
 	double driver_factor_;
 	Universe& universe_;
+	std::unique_ptr<Controller> controller_;
 };

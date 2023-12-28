@@ -148,6 +148,7 @@
     <ClCompile Include="$(SolutionDir)\libraries\imgui\imgui_draw.cpp" />
     <ClCompile Include="$(SolutionDir)\libraries\imgui\imgui_tables.cpp" />
     <ClCompile Include="$(SolutionDir)\libraries\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="Controller.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="GoKart.cpp" />
     <ClCompile Include="Noise.cpp" />
@@ -161,6 +162,7 @@
     <ClInclude Include="$(SolutionDir)\libraries\imgui\imstb_rectpack.h" />
     <ClInclude Include="$(SolutionDir)\libraries\imgui\imstb_textedit.h" />
     <ClInclude Include="$(SolutionDir)\libraries\imgui\imstb_truetype.h" />
+    <ClInclude Include="Controller.h" />
     <ClInclude Include="globals.h" />
     <ClInclude Include="GoKart.h" />
     <ClInclude Include="logo.h" />
