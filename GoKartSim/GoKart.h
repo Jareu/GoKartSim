@@ -15,7 +15,8 @@ public:
 	void advance(double delta_seconds);
 	double getProgress() const;
 	uint8_t getKartNumber() const;
-	void setSpeed(double speed);
+	void setTargetSpeed(double target_speed);
+	double getTargetSpeed();
 	void placeAtStartLine(uint8_t starting_position);
 private:
 	const float DRIVER_FACTOR_SCALE = 1000.f;
@@ -23,7 +24,7 @@ private:
 	uint8_t kart_number_;
 	double progress_;
 	double lifetime_;
-	double speed_;
+	double target_speed_;
 	double driver_factor_;
 	Universe& universe_;
 	std::unique_ptr<Controller> controller_;

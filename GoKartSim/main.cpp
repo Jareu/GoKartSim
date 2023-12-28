@@ -386,7 +386,8 @@ int main(int argc, char* argv[])
 	for (int i=1; i<4; i++)
 	{
 		auto new_kart = universe->spawnGoKart(i);
-		new_kart->setSpeed(DEFAULT_SPEED * i * 0.1f);
+		new_kart->setTargetSpeed(DEFAULT_SPEED);
+        new_kart->placeAtStartLine(i);
         
 		glGenBuffers(1, &gRaceDataBuffer);
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, gRaceDataBuffer);
