@@ -36,7 +36,34 @@ double Controller::update(double dt)
     return value_;
 }
 
-double Controller::getSetPoint()
+double Controller::getError() const
+{
+    return pre_error_;
+}
+
+void Controller::reset()
+{
+    pre_error_ = 0.0;
+    integral_ = 0.0;
+    setpoint_ = 0.0;
+    value_ = 0.0;
+}
+
+std::vector<Controller::CharacterisationData> Controller::characteriseController(Controller controller, double setpoint)
+{
+    std::vector<Controller::CharacterisationData> data;
+    controller.reset();
+    controller.setSetPoint(setpoint);
+
+    for (double t = 0.0; controller.getError() < CHARACTERISATION_THRESHOLD_; t += CHARACTERISATION_TIMESTEP_) {
+        double value = controller.update(CHARACTERISATION_TIMESTEP_);
+        data.emplace_back(Controller::CharacterisationData{ t, value });
+    }
+
+    return data;
+}
+
+double Controller::getSetPoint() const
 {
     return setpoint_;
 }
@@ -51,7 +78,7 @@ void Controller::setP(double p)
     kp_ = p;
 }
 
-double Controller::getP()
+double Controller::getP() const
 {
    return kp_;
 }
@@ -61,7 +88,7 @@ void Controller::setI(double i)
     ki_ = i;
 }
 
-double Controller::getI()
+double Controller::getI() const
 {
     return ki_;
 }
@@ -71,7 +98,7 @@ void Controller::setD(double d)
     kd_ = d;
 }
 
-double Controller::getD()
+double Controller::getD() const
 {
     return kd_;
 }

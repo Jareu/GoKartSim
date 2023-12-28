@@ -389,6 +389,12 @@ int main(int argc, char* argv[])
 		new_kart->setTargetSpeed(DEFAULT_SPEED);
         new_kart->placeAtStartLine(i);
         
+        if (i == 1) {
+            auto speed_data = Controller::characteriseController(*new_kart->getController(), DEFAULT_SPEED);
+
+            // TODO: graph data
+        }
+
 		glGenBuffers(1, &gRaceDataBuffer);
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, gRaceDataBuffer);
 		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLfloat) * universe->getGoKartCount(), nullptr, GL_DYNAMIC_COPY);

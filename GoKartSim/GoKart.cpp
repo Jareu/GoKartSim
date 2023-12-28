@@ -53,3 +53,8 @@ uint8_t GoKart::getKartNumber() const
 {
 	return kart_number_;
 }
+
+const Controller* GoKart::getController()
+{
+	return controller_.get();
+}

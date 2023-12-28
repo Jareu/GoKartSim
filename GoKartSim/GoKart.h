@@ -18,6 +18,7 @@ public:
 	void setTargetSpeed(double target_speed);
 	double getTargetSpeed();
 	void placeAtStartLine(uint8_t starting_position);
+	const Controller* getController();
 private:
 	const float DRIVER_FACTOR_SCALE = 1000.f;
 	const float NOISE_SPEED_FACTOR = 0.25f;
