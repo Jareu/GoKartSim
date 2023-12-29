@@ -1,16 +1,10 @@
 #pragma once
 #include <vector>
+#include "globals.h"
 
 class Controller
 {
 public:
-
-	struct CharacterisationData
-	{
-		double time;
-		double value;
-	};
-
 	Controller() = delete;
 	Controller(double p, double i, double d);
 	~Controller() = default;
@@ -31,7 +25,7 @@ public:
 
 	double getD() const;
 	void setD(double d);
-	static std::vector<Controller::CharacterisationData> characteriseController(Controller controller, double setpoint);
+	static PidData characteriseController(Controller controller, double setpoint);
 private:
 	double kp_;
 	double ki_;
@@ -40,7 +34,7 @@ private:
 	double integral_;
 	double setpoint_;
 	double value_;
-	static constexpr double CHARACTERISATION_TIMESTEP_ = 0.01;
+	static constexpr double CHARACTERISATION_TIMESTEP_ = 0.001;
 	static constexpr double CHARACTERISATION_THRESHOLD_ = 0.0001;
 };
 

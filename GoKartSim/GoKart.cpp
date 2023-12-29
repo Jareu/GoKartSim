@@ -12,7 +12,7 @@ GoKart::GoKart(Universe& universe, uint8_t kart_number, double progress) :
 	kart_number_{ kart_number },
 	lifetime_{ 0.0 },
 	target_speed_{ 0.0 },
-	controller_{ std::make_unique<Controller>(0.5, 0.001, 0.001) }
+	controller_{ std::make_unique<Controller>(DEFAULT_KP, DEFAULT_KI, DEFAULT_KD) }
 {
 	driver_factor_ = universe_.getNoise()->getRandom() * DRIVER_FACTOR_SCALE;
 	std::cout << std::setprecision(3) << "driver factor: " << driver_factor_ << std::endl;
