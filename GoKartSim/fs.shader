@@ -2,7 +2,6 @@
 
 in vec2 Texcoord;
 out vec4 out_Color;
-uniform sampler2D tex;
 uniform vec2 resolution;
 const float screenSize = min(resolution.x, resolution.y);
 const float trackRadius = screenSize * 0.8f * 0.5f; 
@@ -57,7 +56,6 @@ void drawCircle(vec2 fragCoord, Circle circle) {
 
 void main()
 {
-    // out_Color = texture(tex, coord);
     out_Color = vec4(0.0, 0.0, 0.0, 0.0);
     drawTrack();
     drawStartLine();

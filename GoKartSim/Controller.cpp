@@ -38,7 +38,7 @@ double Controller::update(double dt)
 
 double Controller::getError() const
 {
-    return pre_error_;
+    return setpoint_ - value_;
 }
 
 void Controller::reset()
@@ -49,16 +49,29 @@ void Controller::reset()
     value_ = 0.0;
 }
 
-std::vector<Controller::CharacterisationData> Controller::characteriseController(Controller controller, double setpoint)
+PidData Controller::characteriseController(Controller controller, double setpoint)
 {
-    std::vector<Controller::CharacterisationData> data;
+    PidData data;
+
     controller.reset();
     controller.setSetPoint(setpoint);
 
-    for (double t = 0.0; controller.getError() < CHARACTERISATION_THRESHOLD_; t += CHARACTERISATION_TIMESTEP_) {
+    double time = 0.0;
+    double last_error = 0.0;
+    double dError = 0.0;
+    do {
         double value = controller.update(CHARACTERISATION_TIMESTEP_);
-        data.emplace_back(Controller::CharacterisationData{ t, value });
-    }
+        time += CHARACTERISATION_TIMESTEP_;
+
+        // calculate error delta
+        double error = controller.getError();
+        dError = last_error - error;
+        last_error = error;
+
+        data.time_data.emplace_back(time);
+        data.value_data.emplace_back(value);
+        data.error_data.emplace_back(error);
+    } while (abs(dError) > CHARACTERISATION_THRESHOLD_);
 
     return data;
 }

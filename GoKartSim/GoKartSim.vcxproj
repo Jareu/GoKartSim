@@ -75,7 +75,7 @@
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)libraries\sdl2\include;$(SolutionDir)libraries\imgui;$(SolutionDir)libraries\imgui\backends;$(SolutionDir)libraries\glfw\include\GLFW;$(SolutionDir)libraries\glew\include\GL;$(SolutionDir)libraries\freeglut\include\GL;$(SolutionDir)libraries\opengl\include\GL;$(SolutionDir)libraries\FastNoise2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)libraries\sdl2\include;$(SolutionDir)libraries\imgui;$(SolutionDir)libraries\imgui\backends;$(SolutionDir)libraries\implot;$(SolutionDir)libraries\glfw\include\GLFW;$(SolutionDir)libraries\glew\include\GL;$(SolutionDir)libraries\freeglut\include\GL;$(SolutionDir)libraries\opengl\include\GL;$(SolutionDir)libraries\FastNoise2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -111,7 +111,7 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)libraries\sdl2\include;$(SolutionDir)libraries\imgui;$(SolutionDir)libraries\imgui\backends;$(SolutionDir)libraries\glfw\include\GLFW;$(SolutionDir)libraries\glew\include\GL;$(SolutionDir)libraries\freeglut\include\GL;$(SolutionDir)libraries\opengl\include\GL;$(SolutionDir)libraries\FastNoise2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)libraries\sdl2\include;$(SolutionDir)libraries\imgui;$(SolutionDir)libraries\imgui\backends;$(SolutionDir)libraries\implot;$(SolutionDir)libraries\glfw\include\GLFW;$(SolutionDir)libraries\glew\include\GL;$(SolutionDir)libraries\freeglut\include\GL;$(SolutionDir)libraries\opengl\include\GL;$(SolutionDir)libraries\FastNoise2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -148,6 +148,9 @@
     <ClCompile Include="$(SolutionDir)\libraries\imgui\imgui_draw.cpp" />
     <ClCompile Include="$(SolutionDir)\libraries\imgui\imgui_tables.cpp" />
     <ClCompile Include="$(SolutionDir)\libraries\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="..\libraries\implot\implot.cpp" />
+    <ClCompile Include="..\libraries\implot\implot_demo.cpp" />
+    <ClCompile Include="..\libraries\implot\implot_items.cpp" />
     <ClCompile Include="Controller.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="GoKart.cpp" />
@@ -162,10 +165,11 @@
     <ClInclude Include="$(SolutionDir)\libraries\imgui\imstb_rectpack.h" />
     <ClInclude Include="$(SolutionDir)\libraries\imgui\imstb_textedit.h" />
     <ClInclude Include="$(SolutionDir)\libraries\imgui\imstb_truetype.h" />
+    <ClInclude Include="..\libraries\implot\implot.h" />
+    <ClInclude Include="..\libraries\implot\implot_internal.h" />
     <ClInclude Include="Controller.h" />
     <ClInclude Include="globals.h" />
     <ClInclude Include="GoKart.h" />
-    <ClInclude Include="logo.h" />
     <ClInclude Include="main.h" />
     <ClInclude Include="Noise.h" />
     <ClInclude Include="ShaderUtil.h" />
@@ -173,7 +177,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="fs.shader" />
-    <None Include="gs.shader" />
     <None Include="vs.shader" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
