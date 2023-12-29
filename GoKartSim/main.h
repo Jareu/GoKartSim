@@ -11,10 +11,10 @@
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_opengl3.h"
 
-//Starts up SDL, creates window, and initializes OpenGL
 bool initialize();
-
-//Initializes rendering program and clear color
+void initializeValues();
+bool initializeSdl();
+bool initializeGlew();
 bool initializeGl();
 bool initShaders();
 bool initGeometry();

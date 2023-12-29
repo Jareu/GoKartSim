@@ -19,12 +19,8 @@ GlErrorCallback(GLenum source,
         type, severity, message);
 }
 
-bool initialize()
+bool initializeSdl()
 {
-
-    pid_data = std::make_unique<PidData>();
-    test_controller = std::make_unique<Controller>(DEFAULT_KP, DEFAULT_KI, DEFAULT_KD);
-
     //Initialize SDL
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0)
     {
@@ -74,22 +70,56 @@ bool initialize()
     }
 
     SDL_GL_MakeCurrent(window, gl_context);
+    return true;
+}
 
-    //Initialize GLEW
+bool initializeGlew()
+{
     glewExperimental = GL_TRUE;
     GLenum glewError = glewInit();
 
     if (glewError != GLEW_OK)
     {
-        std::cerr << "Error initializing GLEW!" << glewGetErrorString(glewError) << std::endl;
+        std::cerr << "Error initializing GLEW: " << glewGetErrorString(glewError) << std::endl;
         SDL_GL_DeleteContext(gl_context);
         SDL_DestroyWindow(window);
         SDL_Quit();
 
-        return EXIT_FAILURE;
+        return false;
     }
 
-    //Initialize OpenGL
+    return true;
+}
+
+void initializeValues()
+{
+    pid_data = std::make_unique<PidData>();
+    test_controller = std::make_unique<Controller>(DEFAULT_KP, DEFAULT_KI, DEFAULT_KD);
+    window_width = 800;
+    window_height = 600;
+    window = nullptr;
+    clear_color = ImVec4(0.0f, 0.0f, 0.15f, 1.0f);
+    resolution_param = -1;
+    gRaceDataBuffer = 0;
+    quit = false;
+}
+
+bool initialize()
+{
+    initializeValues();
+
+    if (!initializeSdl())
+    {
+        std::cerr << "Unable to initialize SDL!" << std::endl;
+        return false;
+    }
+
+    if (!initializeGlew())
+    {
+        std::cerr << "Unable to initialize GLEW!" << std::endl;
+        return false;
+    }
+
     if (!initializeGl())
     {
         std::cerr << "Unable to initialize OpenGL!" << std::endl;

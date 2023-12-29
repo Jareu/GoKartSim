@@ -15,6 +15,6 @@ struct PidData
 };
 
 constexpr double DEFAULT_KP = 0.6;
-constexpr double DEFAULT_KI = 0.01;
+constexpr double DEFAULT_KI = 0.0;
 constexpr double DEFAULT_KD = 0.0;
 constexpr double DEFAULT_SPEED = 1.0;
