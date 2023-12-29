@@ -1,10 +1,9 @@
-﻿#include <stdio.h>
-#include <iostream>
+﻿#include <iostream>﻿
+#include <stdio.h>
 #include "main.h"
-
-#include "imgui_impl_sdl2.h"
-#include "imgui_impl_opengl3.h"
 #include "implot.h"
+//#include "logo.h"
+#include "globals.h"
 
 void GLAPIENTRY
 GlErrorCallback(GLenum source,
@@ -22,44 +21,11 @@ GlErrorCallback(GLenum source,
 
 bool initialize()
 {
-    initializeValues();
 
-    if (!initializeSdl())
-    {
-        std::cerr << "Error initializing SDL!" << std::endl;
-        return false;
-    }
-
-    if (!initializeGlew())
-    {
-        std::cerr << "Unable to initialize GLEW!" << std::endl;
-        return false;
-    }
-
-    if (!initializeOpenGl())
-    {
-        std::cerr << "Unable to initialize OpenGL!" << std::endl;
-        return false;
-    }
-
-    return true;
-}
-
-void initializeValues()
-{
-    quit = false;
     pid_data = std::make_unique<PidData>();
     test_controller = std::make_unique<Controller>(DEFAULT_KP, DEFAULT_KI, DEFAULT_KD);
-    clear_color = ImVec4(0.0f, 0.0f, 0.15f, 1.0f);
-    resolution_param = -1;
-    gRaceDataBuffer = 0;
-    window_width = 800;
-    window_height = 600;
-    window = nullptr;
-}
 
-bool initializeSdl()
-{
+    //Initialize SDL
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0)
     {
         std::cerr << "SDL_Init Error: " << SDL_GetError() << std::endl;
@@ -109,11 +75,7 @@ bool initializeSdl()
 
     SDL_GL_MakeCurrent(window, gl_context);
 
-    return true;
-}
-
-bool initializeGlew()
-{
+    //Initialize GLEW
     glewExperimental = GL_TRUE;
     GLenum glewError = glewInit();
 
@@ -124,13 +86,20 @@ bool initializeGlew()
         SDL_DestroyWindow(window);
         SDL_Quit();
 
+        return EXIT_FAILURE;
+    }
+
+    //Initialize OpenGL
+    if (!initializeGl())
+    {
+        std::cerr << "Unable to initialize OpenGL!" << std::endl;
         return false;
     }
 
     return true;
 }
 
-bool initializeOpenGl()
+bool initializeGl()
 {
     shaderUtil = std::make_unique<ShaderUtil>();
 
@@ -146,8 +115,17 @@ bool initializeOpenGl()
         return false;
     }
 
-    glEnable(GL_DEBUG_OUTPUT);
+    if (!initTextures())
+    {
+        std::cerr << "Unable to initialize textures" << std::endl;
+        return false;
+    }
+
+    // glEnable(GL_DEBUG_OUTPUT);
     glDebugMessageCallback(GlErrorCallback, 0);
+
+    // Clear color buffer
+    glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
 
     return true;
 }
@@ -212,6 +190,25 @@ bool initGeometry()
     return true;
 }
 
+bool initTextures()
+{
+    glGenTextures(1, &tex);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 256, 256, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glUniform1i(shaderUtil->getUniformLocation("tex"), 0);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    return true;
+}
+
 ImGuiIO& initImGui()
 {
     // Setup Dear ImGui context
@@ -253,30 +250,30 @@ void update()
 
 void render()
 {
-    // Clear color buffer
-    glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
     glClear(GL_COLOR_BUFFER_BIT);
 
+    //Bind program
     shaderUtil->useProgram();
 
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, NULL);
 
+    //Unbind program
     shaderUtil->stopProgram();
 }
 
 void close()
 {
-	SDL_StopTextInput();
+    SDL_StopTextInput();
 
-	// Cleanup ImGui
-	ImGui_ImplOpenGL3_Shutdown();
-	ImGui_ImplSDL2_Shutdown();
+    // Cleanup ImGui
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplSDL2_Shutdown();
     ImPlot::DestroyContext();
-	ImGui::DestroyContext();
+    ImGui::DestroyContext();
 
-	glDeleteBuffers(1, &gRaceDataBuffer);
+    glDeleteBuffers(1, &gRaceDataBuffer);
 
-	shaderUtil->cleanUp();
+    shaderUtil->cleanUp();
 
     glDisableVertexAttribArray(0);
     glDeleteTextures(1, &tex);
@@ -342,7 +339,7 @@ void handleEvents()
     }
 }
 
-void renderUi(const ImGuiIO& imgui_io)
+void renderUi(const ImGuiIO& io)
 {
     // Start the Dear ImGui frame
     ImGui_ImplOpenGL3_NewFrame();
@@ -373,7 +370,7 @@ void renderUi(const ImGuiIO& imgui_io)
 
     // Rendering
     ImGui::Render();
-    glViewport(0, 0, static_cast<GLsizei> (imgui_io.DisplaySize.x), static_cast<GLsizei> (imgui_io.DisplaySize.y));
+    glViewport(0, 0, static_cast<GLsizei> (io.DisplaySize.x), static_cast<GLsizei> (io.DisplaySize.y));
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
     SDL_GL_MakeCurrent(window, gl_context);
@@ -381,49 +378,54 @@ void renderUi(const ImGuiIO& imgui_io)
 
 int main(int argc, char* argv[])
 {
-	if (initialize() == false)
-	{
-		std::cerr << "Initialization failed!" << std::endl;
-		return EXIT_FAILURE;
-	}
+    if (initialize() == false)
+    {
+        std::cerr << "Initialization failed!" << std::endl;
+        return EXIT_FAILURE;
+    }
 
-    auto& imgui_io = initImGui();
-	universe = std::make_unique<Universe>(SEED);
+    auto& io = initImGui();
+    universe = std::make_unique<Universe>(SEED);
+    // spawn 3 karts with default speed of 1.0
+    constexpr double DEFAULT_SPEED = 1.0;
 
-	// spawn 3 karts
-    
-	for (int i=1; i<4; i++)
-	{
-		auto new_kart = universe->spawnGoKart(i);
-		new_kart->setTargetSpeed(DEFAULT_SPEED);
+    for (int i = 1; i < 4; i++)
+    {
+        auto new_kart = universe->spawnGoKart(i);
+        new_kart->setTargetSpeed(DEFAULT_SPEED);
         new_kart->placeAtStartLine(i);
 
-		glGenBuffers(1, &gRaceDataBuffer);
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, gRaceDataBuffer);
-		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLfloat) * universe->getGoKartCount(), nullptr, GL_DYNAMIC_COPY);
+        if (i == 1) {
+            auto speed_data = Controller::characteriseController(*new_kart->getController(), DEFAULT_SPEED);
 
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-	}
-    
+            // TODO: graph data
+        }
+
+        glGenBuffers(1, &gRaceDataBuffer);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, gRaceDataBuffer);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLfloat) * universe->getGoKartCount(), nullptr, GL_DYNAMIC_COPY);
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
 
     *pid_data = Controller::characteriseController(*test_controller, 1.0);
-	  
+
     // Main loop
-	SDL_StartTextInput();
+    SDL_StartTextInput();
 
     while (!quit) {
-		handleEvents();
+        handleEvents();
 
-		update();
-         
-		render();
+        update();
 
-        renderUi(imgui_io);
+        render();
+
+        renderUi(io);
 
         SDL_GL_SwapWindow(window);
     }
 
-	close();
+    close();
 
     return EXIT_SUCCESS;
 }

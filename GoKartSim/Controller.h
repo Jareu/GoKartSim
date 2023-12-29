@@ -34,7 +34,7 @@ private:
 	double integral_;
 	double setpoint_;
 	double value_;
-	static constexpr double CHARACTERISATION_TIMESTEP_ = 0.001;
-	static constexpr double CHARACTERISATION_THRESHOLD_ = 0.0001;
+	static constexpr double CHARACTERISATION_TIMESTEP_ = 0.01;
+	static constexpr double CHARACTERISATION_THRESHOLD_ = 0.000001;
 };
 
