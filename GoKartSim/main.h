@@ -16,7 +16,7 @@ bool initializeGlew();
 bool initializeOpenGl();
 bool initShaders();
 bool initGeometry();
-void initImGui();
+ImGuiIO& initImGui();
 
 //Input handler
 void handleKeys(unsigned char key, int x, int y);
@@ -34,14 +34,13 @@ void updateAspectRatio();
 
 void handleEvents();
 
-void renderUi();
+void renderUi(const ImGuiIO& io);
 
 bool quit;
 inline std::unique_ptr<Universe> universe;
 inline std::unique_ptr <ShaderUtil> shaderUtil;
 std::unique_ptr<PidData> pid_data;
 std::unique_ptr<Controller> test_controller;
-std::unique_ptr<ImGuiIO> imgui_io;
 
 //Graphics
 int window_width;

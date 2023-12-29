@@ -42,8 +42,6 @@ bool initialize()
         return false;
     }
 
-    initImGui();
-
     return true;
 }
 
@@ -214,17 +212,18 @@ bool initGeometry()
     return true;
 }
 
-void initImGui()
+ImGuiIO& initImGui()
 {
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImPlot::CreateContext();
-    imgui_io = std::make_unique<ImGuiIO>(ImGui::GetIO());
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
 
     // Setup Platform/Renderer bindings
     ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
-    ImGui_ImplOpenGL3_Init("#version 430");
+    ImGui_ImplOpenGL3_Init("#version 150");
+    return io;
 }
 
 void handleKeys(unsigned char key, int x, int y)
@@ -343,7 +342,7 @@ void handleEvents()
     }
 }
 
-void renderUi()
+void renderUi(const ImGuiIO& imgui_io)
 {
     // Start the Dear ImGui frame
     ImGui_ImplOpenGL3_NewFrame();
@@ -374,7 +373,7 @@ void renderUi()
 
     // Rendering
     ImGui::Render();
-    glViewport(0, 0, static_cast<GLsizei> (imgui_io->DisplaySize.x), static_cast<GLsizei> (imgui_io->DisplaySize.y));
+    glViewport(0, 0, static_cast<GLsizei> (imgui_io.DisplaySize.x), static_cast<GLsizei> (imgui_io.DisplaySize.y));
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
     SDL_GL_MakeCurrent(window, gl_context);
@@ -388,6 +387,7 @@ int main(int argc, char* argv[])
 		return EXIT_FAILURE;
 	}
 
+    auto& imgui_io = initImGui();
 	universe = std::make_unique<Universe>(SEED);
 
 	// spawn 3 karts
@@ -417,8 +417,8 @@ int main(int argc, char* argv[])
 		update();
          
 		render();
-		
-	    renderUi();
+
+        renderUi(imgui_io);
 
         SDL_GL_SwapWindow(window);
     }
