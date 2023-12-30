@@ -16,7 +16,8 @@ GoKart::GoKart(Universe& universe, uint8_t kart_number, double progress) :
 {
 	driver_factor_ = universe_.getNoise()->getRandom() * DRIVER_FACTOR_SCALE;
 	std::cout << std::setprecision(3) << "driver factor: " << driver_factor_ << std::endl;
-	std::cout << std::setprecision(3) << "PID values: " << driver_factor_ << std::endl;
+	// these will change based on driver factor in time.
+	std::cout << std::setprecision(3) << "PID values: [ " << DEFAULT_KP << ", " << DEFAULT_KI << ", " << DEFAULT_KD << " ]" << std::endl;
 }
 
 void GoKart::placeAtStartLine(uint8_t starting_position)
