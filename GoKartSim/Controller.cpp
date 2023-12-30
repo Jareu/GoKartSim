@@ -5,6 +5,7 @@ Controller::Controller(double p, double i, double d) :
 	ki_{ i },
 	kd_{ d },
     pre_error_{ 0.0 },
+    error_{ 0.0 },
     integral_{ 0.0 },
     setpoint_{ 0.0 },
     value_{ 0.0 }
@@ -13,17 +14,17 @@ Controller::Controller(double p, double i, double d) :
 double Controller::update(double dt)
 {
     // Calculate error
-    double error = setpoint_ - value_;
+    error_ = setpoint_ - value_;
 
     // Proportional term
-    double Pout = kp_ * error;
+    double Pout = kp_ * error_;
 
     // Integral term
-    integral_ += error * dt;
+    integral_ += error_ * dt;
     double Iout = ki_ * integral_;
 
     // Derivative term
-    double derivative = (error - pre_error_) / dt;
+    double derivative = (error_ - pre_error_) / dt;
     // TODO: introduce moving average filter for derivative
     double Dout = kd_ * derivative;
 
@@ -31,14 +32,14 @@ double Controller::update(double dt)
     value_ = Pout + Iout + Dout;
 
     // Save error to previous error
-    pre_error_ = error;
+    pre_error_ = error_;
 
     return value_;
 }
 
 double Controller::getError() const
 {
-    return setpoint_ - value_;
+    return error_;
 }
 
 void Controller::reset()
@@ -84,6 +85,9 @@ double Controller::getSetPoint() const
 void Controller::setSetPoint(double setpoint)
 {
     setpoint_ = setpoint;
+
+    // Calculate error
+    error_ = setpoint_ - value_;
 }
 
 void Controller::setP(double p)

@@ -31,10 +31,11 @@ private:
 	double ki_;
 	double kd_;
 	double pre_error_;
+	double error_;
 	double integral_;
 	double setpoint_;
 	double value_;
 	static constexpr double CHARACTERISATION_TIMESTEP_ = 0.01;
-	static constexpr double CHARACTERISATION_THRESHOLD_ = 0.000001;
+	static constexpr double CHARACTERISATION_THRESHOLD_ = 0.00001;
 };
 
