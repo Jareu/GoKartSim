@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include "main.h"
 #include "implot.h"
-//#include "logo.h"
 #include "globals.h"
 
 void GLAPIENTRY
@@ -261,31 +260,6 @@ void render()
     shaderUtil->stopProgram();
 }
 
-void close()
-{
-    SDL_StopTextInput();
-
-    // Cleanup ImGui
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
-    ImPlot::DestroyContext();
-    ImGui::DestroyContext();
-
-    glDeleteBuffers(1, &gRaceDataBuffer);
-
-    shaderUtil->cleanUp();
-
-    glDisableVertexAttribArray(0);
-    glDeleteTextures(1, &tex);
-    glDeleteBuffers(1, &ebo);
-    glDeleteBuffers(1, &vbo);
-    glDeleteVertexArrays(1, &vao);
-    SDL_GL_DeleteContext(gl_context);
-    SDL_DestroyWindow(window);
-    window = nullptr;
-    SDL_Quit();
-}
-
 void updateAspectRatio()
 {
     glViewport(0, 0, window_width, window_height);
@@ -428,4 +402,28 @@ int main(int argc, char* argv[])
     close();
 
     return EXIT_SUCCESS;
+}
+
+void close()
+{
+    SDL_StopTextInput();
+
+    // Cleanup ImGui
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplSDL2_Shutdown();
+    ImPlot::DestroyContext();
+    ImGui::DestroyContext();
+
+    glDeleteBuffers(1, &gRaceDataBuffer);
+
+    shaderUtil->cleanUp();
+
+    glDisableVertexAttribArray(0);
+    glDeleteBuffers(1, &ebo);
+    glDeleteBuffers(1, &vbo);
+    glDeleteVertexArrays(1, &vao);
+    SDL_GL_DeleteContext(gl_context);
+    SDL_DestroyWindow(window);
+    window = nullptr;
+    SDL_Quit();
 }

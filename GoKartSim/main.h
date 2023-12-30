@@ -39,22 +39,20 @@ void handleEvents();
 
 void renderUi(const ImGuiIO& io);
 
-int window_width = 800;
-int window_height = 600;
+int window_width;
+int window_height;
 
 SDL_Window* window = nullptr;
 SDL_GLContext gl_context;
 
 //Graphics program
 ImVec4 clear_color = ImVec4(0.0f, 0.0f, 0.15f, 1.0f);
-GLint resolution_param = -1;
-GLuint gRaceDataBuffer = 0;
+GLint resolution_param;
+GLuint gRaceDataBuffer;
 bool quit = false;
 inline std::unique_ptr<Universe> universe;
 inline std::unique_ptr <ShaderUtil> shaderUtil;
 std::unique_ptr<PidData> pid_data;
 std::unique_ptr<Controller> test_controller;
 
-GLuint         vao, vbo, ebo, tex;
-GLuint         vert_shader;
-GLuint         frag_shader;
+GLuint vao, vbo, ebo;
