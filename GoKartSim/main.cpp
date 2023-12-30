@@ -145,12 +145,6 @@ bool initializeGl()
         return false;
     }
 
-    if (!initTextures())
-    {
-        std::cerr << "Unable to initialize textures" << std::endl;
-        return false;
-    }
-
     // glEnable(GL_DEBUG_OUTPUT);
     glDebugMessageCallback(GlErrorCallback, 0);
 
@@ -172,9 +166,8 @@ bool initShaders()
         return false;
     }
 
-
-    glGenVertexArrays(1, &vao);
-    glBindVertexArray(vao);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     resolution_param = shaderUtil->getUniformLocation("resolution");
 
@@ -185,17 +178,20 @@ bool initShaders()
 
 bool initGeometry()
 {
-    const GLfloat verts[6][4] = {
-        //  x      y      s      t
-        { -1.0f, -1.0f,  0.0f,  1.0f }, // BL
-        { -1.0f,  1.0f,  0.0f,  0.0f }, // TL
-        {  1.0f,  1.0f,  1.0f,  0.0f }, // TR
-        {  1.0f, -1.0f,  1.0f,  1.0f }, // BR
+    const GLfloat verts[4][2] = {
+        //  x      y
+        { -1.0f,  1.0f }, // TL
+        {  1.0f,  1.0f }, // TR
+        {  1.0f, -1.0f }, // BR
+        { -1.0f, -1.0f } // BL
     };
 
     const GLint indicies[] = {
         0, 1, 2, 0, 2, 3
     };
+
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
 
     // Populate vertex buffer
     glGenBuffers(1, &vbo);
@@ -207,34 +203,8 @@ bool initGeometry()
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indicies), indicies, GL_STATIC_DRAW);
 
-    // Bind vertex position attribute
-    GLint pos_attr_loc = glGetAttribLocation(shaderUtil->getProgramId(), "in_Position");
-    glVertexAttribPointer(pos_attr_loc, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), (void*)0);
-    glEnableVertexAttribArray(pos_attr_loc);
-
-    // Bind vertex texture coordinate attribute
-    GLint tex_attr_loc = glGetAttribLocation(shaderUtil->getProgramId(), "in_Texcoord");
-    glVertexAttribPointer(tex_attr_loc, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), (void*)(2 * sizeof(GLfloat)));
-    glEnableVertexAttribArray(tex_attr_loc);
-
-    return true;
-}
-
-bool initTextures()
-{
-    glGenTextures(1, &tex);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 256, 256, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
-    glUniform1i(shaderUtil->getUniformLocation("tex"), 0);
-
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, 0);
 
     return true;
 }

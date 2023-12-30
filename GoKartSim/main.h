@@ -18,7 +18,6 @@ bool initializeGlew();
 bool initializeGl();
 bool initShaders();
 bool initGeometry();
-bool initTextures();
 
 ImGuiIO& initImGui();
 
