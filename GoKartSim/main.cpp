@@ -93,7 +93,7 @@ bool initializeGlew()
 void initializeValues()
 {
     pid_data = std::make_unique<PidData>();
-    test_controller = std::make_unique<Controller>(DEFAULT_KP, DEFAULT_KI, DEFAULT_KD);
+    test_controller = std::make_unique<Controller>();
     window_width = 800;
     window_height = 600;
     window = nullptr;
@@ -320,20 +320,24 @@ void renderUi(const ImGuiIO& io)
     ImGui_ImplSDL2_NewFrame(window);
     ImGui::NewFrame();
 
-    // 1. Show a simple window.
-    // Tip: if we don't call ImGui::Begin()/ImGui::End() the widgets automatically appears in a window called "Debug".
+    // PID GUI
     {
+        // a slider for each PID value
+        // a button to restore defaults
+        // a button to apply values in slider and characterize the control system
+
         constexpr float value = 1234.f;
         char text1[128] = "";
         char text2[128] = "";
 
-        ImGui::Text("Value = %f", value);                   // Display some text (you can use a format string too)
+        ImGui::Text("P Value", value);                   // Display some text (you can use a format string too)
         ImGui::InputText("string1", text1, IM_ARRAYSIZE(text1));   // Input text with a label
+
         ImGui::Text("A second text object");                    // Another text object
         ImGui::InputText("string2", text2, IM_ARRAYSIZE(text2));// Another input text
     }
 
-    // 2. Show a graph.
+    // PID Graph
     ImGui::Begin("PID Characterization");
     if (ImPlot::BeginPlot("PID Output over time")) {
         ImPlot::PlotLine("PID Output", pid_data->time_data.data(), pid_data->value_data.data(), pid_data->time_data.size());

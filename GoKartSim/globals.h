@@ -4,8 +4,10 @@
 
 extern constexpr double PI = 3.141592653589793238462643383279;
 extern constexpr double TWO_PI = 6.283185307179586476925286766558;
-extern constexpr double POSITION_SCALE = 10.0;
+extern constexpr double POSITION_SCALE = 2.0;
+extern constexpr double NOISE_SCALE = 100.0;
 extern constexpr int SEED = 1234;
+
 
 struct PidData
 {
@@ -14,7 +16,4 @@ struct PidData
 	std::vector<double> error_data;
 };
 
-constexpr double DEFAULT_KP = 0.6;
-constexpr double DEFAULT_KI = 0.0;
-constexpr double DEFAULT_KD = 0.0;
 constexpr double DEFAULT_SPEED = 1.0;
