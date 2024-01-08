@@ -75,6 +75,9 @@
     <ClCompile Include="..\libraries\implot\implot_items.cpp">
       <Filter>imgui\implot</Filter>
     </ClCompile>
+    <ClCompile Include="characterisation.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="main.h">
@@ -121,6 +124,9 @@
     </ClInclude>
     <ClInclude Include="..\libraries\implot\implot_internal.h">
       <Filter>imgui\implot</Filter>
+    </ClInclude>
+    <ClInclude Include="characterisation.h">
+      <Filter>Classes</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

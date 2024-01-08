@@ -27,7 +27,6 @@ public:
 	double getD() const;
 	void setD(double d);
 
-	static PidData characteriseController(Controller controller, double setpoint);
 private:
 	void clampIntegrator();
 
@@ -51,9 +50,6 @@ private:
 	double previousMeasurement_;
 	double measurement_;
 	double output_;
-
-	static constexpr double CHARACTERISATION_TIMESTEP_ = 0.01;
-	static constexpr double CHARACTERISATION_THRESHOLD_ = 0.00001;
 
 	static constexpr double DEFAULT_KP = 0.3;
 	static constexpr double DEFAULT_KI = 0.5;

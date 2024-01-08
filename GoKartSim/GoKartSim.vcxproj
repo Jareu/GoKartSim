@@ -155,6 +155,7 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="GoKart.cpp" />
     <ClCompile Include="Noise.cpp" />
+    <ClCompile Include="characterisation.cpp" />
     <ClCompile Include="ShaderUtil.cpp" />
     <ClCompile Include="Universe.cpp" />
   </ItemGroup>
@@ -172,6 +173,7 @@
     <ClInclude Include="GoKart.h" />
     <ClInclude Include="main.h" />
     <ClInclude Include="Noise.h" />
+    <ClInclude Include="characterisation.h" />
     <ClInclude Include="ShaderUtil.h" />
     <ClInclude Include="Universe.h" />
   </ItemGroup>

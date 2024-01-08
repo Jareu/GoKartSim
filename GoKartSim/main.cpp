@@ -3,6 +3,7 @@
 #include "main.h"
 #include "implot.h"
 #include "globals.h"
+#include "characterisation.h"
 
 void GLAPIENTRY
 GlErrorCallback(GLenum source,
@@ -374,7 +375,7 @@ int main(int argc, char* argv[])
         new_kart->placeAtStartLine(i);
 
         if (i == 1) {
-            auto speed_data = Controller::characteriseController(*new_kart->getController(), DEFAULT_SPEED);
+            auto speed_data = characterisation::characteriseController(*new_kart->getController(), DEFAULT_SPEED);
 
             // TODO: graph data
         }
@@ -386,7 +387,7 @@ int main(int argc, char* argv[])
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
 
-    *pid_data = Controller::characteriseController(*test_controller, 1.0);
+    *pid_data = characterisation::characteriseController(*test_controller, 1.0);
 
     // Main loop
     SDL_StartTextInput();
