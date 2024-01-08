@@ -53,7 +53,6 @@ GLuint gRaceDataBuffer;
 bool quit = false;
 inline std::unique_ptr<Universe> universe;
 inline std::unique_ptr <ShaderUtil> shaderUtil;
-std::unique_ptr<PidData> pid_data;
 std::unique_ptr<Controller> test_controller;
 
 GLuint vao, vbo, ebo;

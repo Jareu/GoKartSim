@@ -93,7 +93,6 @@ bool initializeGlew()
 
 void initializeValues()
 {
-    pid_data = std::make_unique<PidData>();
     test_controller = std::make_unique<Controller>();
     window_width = 800;
     window_height = 600;
@@ -321,32 +320,6 @@ void renderUi(const ImGuiIO& io)
     ImGui_ImplSDL2_NewFrame(window);
     ImGui::NewFrame();
 
-    // PID GUI
-    {
-        // a slider for each PID value
-        // a button to restore defaults
-        // a button to apply values in slider and characterize the control system
-
-        constexpr float value = 1234.f;
-        char text1[128] = "";
-        char text2[128] = "";
-
-        ImGui::Text("P Value", value);                   // Display some text (you can use a format string too)
-        ImGui::InputText("string1", text1, IM_ARRAYSIZE(text1));   // Input text with a label
-
-        ImGui::Text("A second text object");                    // Another text object
-        ImGui::InputText("string2", text2, IM_ARRAYSIZE(text2));// Another input text
-    }
-
-    // PID Graph
-    ImGui::Begin("PID Characterization");
-    if (ImPlot::BeginPlot("PID Output over time")) {
-        ImPlot::PlotLine("PID Output", pid_data->time_data.data(), pid_data->value_data.data(), pid_data->time_data.size());
-        ImPlot::PlotLine("PID Error", pid_data->time_data.data(), pid_data->error_data.data(), pid_data->time_data.size());
-        ImPlot::EndPlot();
-    }
-    ImGui::End();
-
     // Rendering
     ImGui::Render();
     glViewport(0, 0, static_cast<GLsizei> (io.DisplaySize.x), static_cast<GLsizei> (io.DisplaySize.y));
@@ -374,20 +347,12 @@ int main(int argc, char* argv[])
         new_kart->setTargetSpeed(DEFAULT_SPEED);
         new_kart->placeAtStartLine(i);
 
-        if (i == 1) {
-            auto speed_data = characterisation::characteriseController(*new_kart->getController(), DEFAULT_SPEED);
-
-            // TODO: graph data
-        }
-
         glGenBuffers(1, &gRaceDataBuffer);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, gRaceDataBuffer);
         glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLfloat) * universe->getGoKartCount(), nullptr, GL_DYNAMIC_COPY);
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
-
-    *pid_data = characterisation::characteriseController(*test_controller, 1.0);
 
     // Main loop
     SDL_StartTextInput();
