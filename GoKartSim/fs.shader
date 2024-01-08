@@ -1,8 +1,6 @@
 #version 430 core
 
-in vec2 Texcoord;
 out vec4 out_Color;
-uniform sampler2D tex;
 uniform vec2 resolution;
 const float screenSize = min(resolution.x, resolution.y);
 const float trackRadius = screenSize * 0.8f * 0.5f; 
