@@ -44,7 +44,7 @@ void GoKart::advance(double delta_seconds)
 	float noise_val = 1.f - (universe_.getNoise()->getNoise2D(lifetime_ / NOISE_SCALE, driver_factor_ / NOISE_SCALE) + 1.f) * 0.5f * NOISE_SPEED_FACTOR;
 	double setpoint = noise_val * target_speed_;
 	controller_->setSetPoint(setpoint);
-	double speed = controller_->update(delta_seconds);
+	double speed = controller_->update(delta_seconds) * POSITION_SCALE;
 	progress_ = std::fmod(progress_ + (delta_seconds * speed), TWO_PI);
 }
 
