@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <memory>
+#include "Transponder.h"
 #include "Controller.h"
 
 class Universe;
@@ -20,6 +21,7 @@ public:
 	void placeAtStartLine(uint8_t starting_position);
 	const Controller* getController();
 private:
+	void handleFinishLine();
 	const float DRIVER_FACTOR_SCALE = 1000.f;
 	const float NOISE_SPEED_FACTOR = 0.25f;
 	uint8_t kart_number_;
@@ -29,4 +31,5 @@ private:
 	double driver_factor_;
 	Universe& universe_;
 	std::unique_ptr<Controller> controller_;
+	std::unique_ptr <Transponder> transponder_;
 };
