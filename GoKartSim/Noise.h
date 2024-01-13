@@ -9,7 +9,7 @@ public:
 	Noise(int seed);
 	~Noise() = default;
 
-	float getRandom();
+	float getRandom() const;
 	float getNoise2D(float x, float y) const;
 	float getNoise3D(float x, float y, float z) const;
 private:
