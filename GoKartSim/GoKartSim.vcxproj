@@ -157,7 +157,9 @@
     <ClCompile Include="Noise.cpp" />
     <ClCompile Include="characterisation.cpp" />
     <ClCompile Include="ShaderUtil.cpp" />
+    <ClCompile Include="Transponder.cpp" />
     <ClCompile Include="Universe.cpp" />
+    <ClCompile Include="utilities.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="$(SolutionDir)\libraries\imgui\imconfig.h" />
@@ -175,7 +177,9 @@
     <ClInclude Include="Noise.h" />
     <ClInclude Include="characterisation.h" />
     <ClInclude Include="ShaderUtil.h" />
+    <ClInclude Include="Transponder.h" />
     <ClInclude Include="Universe.h" />
+    <ClInclude Include="utilities.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="fs.shader" />

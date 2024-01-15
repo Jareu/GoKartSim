@@ -8,7 +8,7 @@ Noise::Noise(int seed) :
 	srand(seed);
 }
 
-float Noise::getRandom()
+float Noise::getRandom() const
 {
 	auto random_float = rand() / static_cast<float>(RAND_MAX);
 	return random_float;

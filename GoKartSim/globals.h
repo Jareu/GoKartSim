@@ -7,7 +7,8 @@ extern constexpr double TWO_PI = 6.283185307179586476925286766558;
 extern constexpr double POSITION_SCALE = 0.25;
 extern constexpr double NOISE_SCALE = 100.0;
 extern constexpr int SEED = 1234;
-
+extern constexpr uint32_t TIMESTAMP_MAX = 268'435'456;
+extern constexpr uint32_t TRANSPONDER_ID_MAX = 268'435'456;
 
 struct PidData
 {

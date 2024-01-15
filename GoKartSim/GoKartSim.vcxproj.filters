@@ -78,6 +78,12 @@
     <ClCompile Include="characterisation.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Transponder.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="utilities.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="main.h">
@@ -125,8 +131,14 @@
     <ClInclude Include="..\libraries\implot\implot_internal.h">
       <Filter>imgui\implot</Filter>
     </ClInclude>
-    <ClInclude Include="characterisation.h">
+    <ClInclude Include="Transponder.h">
       <Filter>Classes</Filter>
+    </ClInclude>
+    <ClInclude Include="characterisation.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="utilities.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
