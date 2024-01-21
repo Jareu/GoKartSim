@@ -75,7 +75,7 @@
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)libraries\sdl2\include;$(SolutionDir)libraries\imgui;$(SolutionDir)libraries\imgui\backends;$(SolutionDir)libraries\implot;$(SolutionDir)libraries\glfw\include\GLFW;$(SolutionDir)libraries\glew\include\GL;$(SolutionDir)libraries\freeglut\include\GL;$(SolutionDir)libraries\opengl\include\GL;$(SolutionDir)libraries\FastNoise2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)libraries\sdl2\include;$(SolutionDir)libraries\imgui;$(SolutionDir)libraries\imgui\backends;$(SolutionDir)libraries\implot;$(SolutionDir)libraries\glfw\include\GLFW;$(SolutionDir)libraries\glew\include\GL;$(SolutionDir)libraries\freeglut\include\GL;$(SolutionDir)libraries\opengl\include\GL;$(SolutionDir)libraries\FastNoise2\include;C:\libraries\Boost\boost_1_84_0;%(AdditionalIncludeDirectories);C:\libraries\Boost\boost_1_84_0</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -93,7 +93,7 @@
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)libraries\sdl2\include;$(SolutionDir)libraries\imgui;$(SolutionDir)libraries\imgui\backends;$(SolutionDir)libraries\glfw\include\GLFW;$(SolutionDir)libraries\glew\include\GL;$(SolutionDir)libraries\freeglut\include\GL;$(SolutionDir)libraries\opengl\include\GL;$(SolutionDir)libraries\FastNoise2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)libraries\sdl2\include;$(SolutionDir)libraries\imgui;$(SolutionDir)libraries\imgui\backends;$(SolutionDir)libraries\glfw\include\GLFW;$(SolutionDir)libraries\glew\include\GL;$(SolutionDir)libraries\freeglut\include\GL;$(SolutionDir)libraries\opengl\include\GL;$(SolutionDir)libraries\FastNoise2\include;%(AdditionalIncludeDirectories);C:\libraries\Boost\boost_1_84_0</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -111,7 +111,7 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)libraries\sdl2\include;$(SolutionDir)libraries\imgui;$(SolutionDir)libraries\imgui\backends;$(SolutionDir)libraries\implot;$(SolutionDir)libraries\glfw\include\GLFW;$(SolutionDir)libraries\glew\include\GL;$(SolutionDir)libraries\freeglut\include\GL;$(SolutionDir)libraries\opengl\include\GL;$(SolutionDir)libraries\FastNoise2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)libraries\sdl2\include;$(SolutionDir)libraries\imgui;$(SolutionDir)libraries\imgui\backends;$(SolutionDir)libraries\implot;$(SolutionDir)libraries\glfw\include\GLFW;$(SolutionDir)libraries\glew\include\GL;$(SolutionDir)libraries\freeglut\include\GL;$(SolutionDir)libraries\opengl\include\GL;$(SolutionDir)libraries\FastNoise2\include;C:\libraries\Boost\boost_1_84_0;%(AdditionalIncludeDirectories);C:\libraries\Boost\boost_1_84_0</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -129,7 +129,7 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)libraries\sdl2\include;$(SolutionDir)libraries\imgui;$(SolutionDir)libraries\imgui\backends;$(SolutionDir)libraries\glfw\include\GLFW;$(SolutionDir)libraries\glew\include\GL;$(SolutionDir)libraries\freeglut\include\GL;$(SolutionDir)libraries\opengl\include\GL;$(SolutionDir)libraries\FastNoise2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)libraries\sdl2\include;$(SolutionDir)libraries\imgui;$(SolutionDir)libraries\imgui\backends;$(SolutionDir)libraries\glfw\include\GLFW;$(SolutionDir)libraries\glew\include\GL;$(SolutionDir)libraries\freeglut\include\GL;$(SolutionDir)libraries\opengl\include\GL;$(SolutionDir)libraries\FastNoise2\include;%(AdditionalIncludeDirectories);C:\libraries\Boost\boost_1_84_0</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -157,6 +157,7 @@
     <ClCompile Include="Noise.cpp" />
     <ClCompile Include="characterisation.cpp" />
     <ClCompile Include="ShaderUtil.cpp" />
+    <ClCompile Include="TcpClient.cpp" />
     <ClCompile Include="Transponder.cpp" />
     <ClCompile Include="Universe.cpp" />
     <ClCompile Include="utilities.cpp" />
@@ -177,6 +178,7 @@
     <ClInclude Include="Noise.h" />
     <ClInclude Include="characterisation.h" />
     <ClInclude Include="ShaderUtil.h" />
+    <ClInclude Include="TcpClient.h" />
     <ClInclude Include="Transponder.h" />
     <ClInclude Include="Universe.h" />
     <ClInclude Include="utilities.h" />
