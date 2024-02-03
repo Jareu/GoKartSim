@@ -3,10 +3,9 @@
 #include <chrono>
 #include <thread>
 #include <boost/asio.hpp>
+#include <queue>
 
 using boost::asio::ip::tcp;
-
-std::string data = { "$14822963501AA00D104FFA200" };
 
 class TcpClient
 {
@@ -14,9 +13,11 @@ public:
     TcpClient() = delete;
     TcpClient(const std::string& ip, const std::string& port);
     ~TcpClient();
+    void enqueue(const std::string& data);
+    void processQueue();
 private:
     void connect();
-    void start();
+    void run();
 
     boost::asio::io_context io_context_;
     tcp::socket socket_;
@@ -24,4 +25,6 @@ private:
     std::string ip_;
     std::string port_;
     bool connected_;
+    std::queue<std::string> queue_;
+    std::thread sender_{ &TcpClient::processQueue, this };
 };

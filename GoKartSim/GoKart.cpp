@@ -13,7 +13,6 @@ GoKart::GoKart(Universe& universe, uint8_t kart_number, double progress) :
 	lifetime_{ 0.0 },
 	target_speed_{ 0.0 },
 	controller_{ std::make_unique<Controller>() }
-
 {
 	transponder_ = std::make_unique <Transponder>(universe, *this);
 	driver_factor_ = universe_.getNoise()->getRandom() * DRIVER_FACTOR_SCALE;
@@ -58,7 +57,8 @@ void GoKart::advance(double delta_seconds)
 
 void GoKart::handleFinishLine()
 {
-	std::cout << transponder_->getData() << std::endl;
+	std::string transponder_data = transponder_->getData();
+	universe_.sendData(transponder_data);
 }
 
 uint8_t GoKart::getKartNumber() const

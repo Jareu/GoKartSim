@@ -7,7 +7,7 @@ TcpClient::TcpClient(const std::string& ip, const std::string& port) :
     port_{ port },
     connected_{ false }
 {
-    connect();
+    run();
 }
 
 TcpClient::~TcpClient()
@@ -15,6 +15,12 @@ TcpClient::~TcpClient()
     boost::system::error_code ec;
     socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     socket_.close();
+}
+
+void TcpClient::run()
+{
+    sender_.join();
+    connect();
 }
 
 void TcpClient::connect()
@@ -30,37 +36,46 @@ void TcpClient::connect()
             if (error) {
                 std::cerr << "Unable to connect" << std::endl;
                 std::cout << "Trying again in 1 second." << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(1000));
             }
             else {
                 std::cerr << "Connected." << std::endl;
                 connected_ = true;
-                start();
             }
         }
         catch (const std::exception& e)
         {
             std::cerr << "Exception: " << e.what() << std::endl;
         }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
+
+    run();
 }
 
-void TcpClient::start()
+void TcpClient::enqueue(const std::string& data)
+{
+    queue_.push(data);
+}
+
+void TcpClient::processQueue()
 {
     boost::system::error_code error;
 
     while (connected_) {
         try
         {
-            std::cout << "Sending data: '" << data << "'" << std::endl;
-            boost::asio::write(socket, boost::asio::buffer(data + "\n", data.length() + 1), error);
+            if (!queue_.empty())
+            {
+                std::cout << "Sending data: '" << queue_.front() << "'" << std::endl;
+                boost::asio::write(socket_, boost::asio::buffer(queue_.front() + "\n", queue_.front().length() + 1), error);
+                queue_.pop();
+            }
 
             if (error) {
-                connect();
+                connected_ = false;
             }
             else {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
         }
         catch (const std::exception& e)

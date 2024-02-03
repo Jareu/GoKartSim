@@ -3,9 +3,9 @@
 
 Universe::Universe(int seed) :
 	noise_{ std::make_shared<Noise>(seed) },
-	last_tick_time_{ std::chrono::system_clock::now() }
+	last_tick_time_{ std::chrono::system_clock::now() },
+	tcp_client_{"127.0.0.1", "5001"}
 {
-
 }
 
 std::shared_ptr<Noise> Universe::getNoise()
@@ -78,4 +78,9 @@ std::vector<float> Universe::getRaceData()
 	}
 
 	return race_data;
+}
+
+void Universe::sendData(const std::string& data)
+{
+	tcp_client_.enqueue(data);
 }
