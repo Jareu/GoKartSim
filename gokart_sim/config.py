@@ -3,9 +3,7 @@ Configuration values and math helpers for the go-kart simulation.
 """
 
 import math
-
-from .chrono import chrono
-
+from pychrono import core as chrono
 
 class KartConfig:
     chassis_length = 1.8
@@ -46,12 +44,12 @@ class KartConfig:
     tire_min_vx = 0.3
 
     step_size = 1e-3
-    gravity = chrono.ChVectorD(0, 0, -9.81)
+    gravity = chrono.ChVector3d(0, 0, -9.81)
 
 
-def make_nsc_material(mu: float, cr: float = 0.01) -> chrono.ChMaterialSurfaceNSC:
+def make_nsc_material(mu: float, cr: float = 0.01) -> chrono.ChContactMaterialNSC:
     """Factory for Chrono NSC material with given friction and restitution."""
-    material = chrono.ChMaterialSurfaceNSC()
+    material = chrono.ChContactMaterialNSC()
     material.SetFriction(mu)
     material.SetRestitution(cr)
     return material

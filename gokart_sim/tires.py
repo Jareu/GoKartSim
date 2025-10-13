@@ -3,9 +3,7 @@ Lateral tire model bindings for Chrono wheel bodies.
 """
 
 import math
-
-from .chrono import chrono
-
+from pychrono import core as chrono
 
 class SimpleTireModel:
     def __init__(self, mu=1.1, C_alpha=45000.0, relax_len=0.6, k_load_sens=0.2, v_min=0.3):
@@ -48,7 +46,7 @@ class WheelTireBinding:
         self.radius = radius
 
     def compute_patch_vel_local(self):
-        contact_point = chrono.ChVectorD(0, 0, -self.radius)
+        contact_point = chrono.ChVector3d(0, 0, -self.radius)
         v_world = self.wheel.PointSpeedLocalToParent(contact_point)
         v_local = self.wheel.TransformDirectionParentToLocal(v_world)
         return v_local.x, v_local.y
@@ -59,6 +57,6 @@ class WheelTireBinding:
 
     def apply(self, Fy, Mz):
         if Fy:
-            self.wheel.AddForceAtLocalPos(chrono.ChVectorD(0, Fy, 0), chrono.ChVectorD(0, 0, -self.radius))
+            self.wheel.AddForceAtLocalPos(chrono.ChVector3d(0, Fy, 0), chrono.ChVector3d(0, 0, -self.radius))
         if Mz:
-            self.wheel.AddTorqueLocal(chrono.ChVectorD(0, 0, Mz))
+            self.wheel.AddTorqueLocal(chrono.ChVector3d(0, 0, Mz))

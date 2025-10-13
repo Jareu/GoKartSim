@@ -8,8 +8,7 @@ import math
 import time
 
 import websockets
-
-from .chrono import chrono
+from pychrono import core as chrono
 from .config import KartConfig, rad
 from .drivers import ConstantDriver
 from .track import build_oval_path
@@ -43,6 +42,8 @@ class SimServer:
         self.clients = set()
         self._server = None
         self._stop = asyncio.Event()
+        self.offline_mode = False
+        self._offline_end_time = None
 
         # per-kart input overrides (None = use AI)
         self.inputs_override = {}  # id -> {"throttle":..., "brake":..., "steer":...}
@@ -57,10 +58,9 @@ class SimServer:
         cfg.step_size = self.step
         self.cfg = cfg
         self.sys = chrono.ChSystemNSC()
-        self.sys.Set_G_acc(cfg.gravity)
-        self.sys.SetStep(self.step)
+        self.sys.SetGravitationalAcceleration(cfg.gravity)
         self.ground = build_ground(self.sys, cfg)
-        self.path, self.track_pts = build_oval_path(chrono.ChVectorD(0, 0, 0), straight_len=40.0, radius=12.0)
+        self.path, self.track_pts = build_oval_path(chrono.ChVector3d(0, 0, 0), straight_len=40.0, radius=12.0)
         add_track_visual(self.ground, self.path)
         self.karts = spawn_karts(self.sys, cfg, n=self.num_karts, spacing=2.8)
         self.drivers = [ConstantDriver(throttle=0.5, steer_deg=-20.0, brake=0.0) for _ in self.karts]
@@ -207,15 +207,40 @@ class SimServer:
     # ---------- sim loop ----------
 
     async def run(self):
-        self._server = await websockets.serve(
-            self.ws_handler,
-            self.host,
-            self.port,
-            ping_interval=20,
-            ping_timeout=20,
-            max_queue=None,
-        )
-        print(f"WebSocket listening on ws://{self.host}:{self.port}/ws")
+        bind_ports = [self.port]
+        if self.port not in (None, 0):
+            bind_ports.append(0)
+
+        last_error = None
+        for bind_port in bind_ports:
+            try:
+                self._server = await websockets.serve(
+                    self.ws_handler,
+                    self.host,
+                    bind_port,
+                    ping_interval=20,
+                    ping_timeout=20,
+                    max_queue=None,
+                )
+                sockets = self._server.sockets or []
+                if sockets:
+                    self.port = sockets[0].getsockname()[1]
+                print(f"WebSocket listening on ws://{self.host}:{self.port}/ws")
+                break
+            except OSError as err:
+                last_error = err
+                self._server = None
+
+        if self._server is None:
+            self.offline_mode = True
+            self._offline_end_time = self.sys.GetChTime() + 2.0
+            msg = "Unable to bind WebSocket server; running offline simulation for 2.0 simulated seconds."
+            if last_error:
+                msg += f" ({last_error})"
+            print(msg)
+        else:
+            self.offline_mode = False
+            self._offline_end_time = None
 
         next_tick = time.perf_counter()
         try:
@@ -254,9 +279,13 @@ class SimServer:
 
                 # one broadcast per frame
                 await self._broadcast_json(self._state_payload())
+                if self.offline_mode and self.sys.GetChTime() >= (self._offline_end_time or 0.0):
+                    print("Offline simulation complete; shutting down.")
+                    self.stop()
         finally:
-            self._server.close()
-            await self._server.wait_closed()
+            if self._server is not None:
+                self._server.close()
+                await self._server.wait_closed()
 
     def stop(self):
         self._stop.set()

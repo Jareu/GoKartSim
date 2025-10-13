@@ -3,11 +3,9 @@ Chrono go-kart assembly and dynamics helpers.
 """
 
 import math
-
-from .chrono import chrono
+from pychrono import core as chrono
 from .config import KartConfig, make_nsc_material, plinterp
 from .tires import SimpleTireModel, WheelTireBinding
-
 
 class GoKart:
     def __init__(
@@ -15,7 +13,7 @@ class GoKart:
         sys,
         cfg: KartConfig,
         name="kart",
-        pose=chrono.ChCoordsysD(chrono.ChVectorD(0, 0, 0.25)),
+        pose=chrono.ChCoordsysd(chrono.ChVector3d(0, 0, 0.25)),
     ):
         self.sys = sys
         self.cfg = cfg
@@ -30,22 +28,15 @@ class GoKart:
         Ix = (1 / 12) * cfg.chassis_mass * (cfg.chassis_height**2 + cfg.chassis_width**2)
         Iy = (1 / 12) * cfg.chassis_mass * (cfg.chassis_length**2 + cfg.chassis_height**2)
         Iz = (1 / 12) * cfg.chassis_mass * (cfg.chassis_length**2 + cfg.chassis_width**2)
-        self.chassis.SetInertiaXX(chrono.ChVectorD(Ix, Iy, Iz))
+        self.chassis.SetInertiaXX(chrono.ChVector3d(Ix, Iy, Iz))
         self.chassis.SetPos(pose.pos)
         self.chassis.SetRot(pose.rot)
-        cmod = self.chassis.GetCollisionModel()
-        cmod.ClearModel()
-        cmod.AddBox(
-            self.mat_ground,
-            cfg.chassis_length / 2,
-            cfg.chassis_width / 2,
-            cfg.chassis_height / 2,
-            chrono.ChVectorD(0, 0, 0),
+        collision_shape = chrono.ChCollisionShapeBox(
+            self.mat_ground, chrono.ChVector3d(cfg.chassis_length, cfg.chassis_width, cfg.chassis_height)
         )
-        cmod.BuildModel()
-        self.chassis.SetCollide(True)
-        vis = chrono.ChBoxShape()
-        vis.GetBoxGeometry().Size = chrono.ChVectorD(cfg.chassis_length / 2, cfg.chassis_width / 2, cfg.chassis_height / 2)
+        self.chassis.AddCollisionShape(collision_shape)
+        self.chassis.EnableCollision(True)
+        vis = chrono.ChVisualShapeBox(chrono.ChVector3d(cfg.chassis_length, cfg.chassis_width, cfg.chassis_height))
         self.chassis.AddVisualShape(vis)
         sys.Add(self.chassis)
 
@@ -56,62 +47,67 @@ class GoKart:
         radius = cfg.wheel_radius
 
         # Front uprights + steering
-        self.upright_FL = self._make_upright(chrono.ChVectorD(+wb / 2, +ft, 0.0))
-        self.upright_FR = self._make_upright(chrono.ChVectorD(+wb / 2, -ft, 0.0))
-        self.steer_FL = self._steer_motor(self.upright_FL, chrono.ChVectorD(+wb / 2, +ft, 0.0))
-        self.steer_FR = self._steer_motor(self.upright_FR, chrono.ChVectorD(+wb / 2, -ft, 0.0))
-        self.steer_fun_FL = chrono.ChFunction_Setpoint()
+        self.upright_FL = self._make_upright(chrono.ChVector3d(+wb / 2, +ft, 0.0))
+        self.upright_FR = self._make_upright(chrono.ChVector3d(+wb / 2, -ft, 0.0))
+        self.steer_FL = self._steer_motor(self.upright_FL, chrono.ChVector3d(+wb / 2, +ft, 0.0))
+        self.steer_FR = self._steer_motor(self.upright_FR, chrono.ChVector3d(+wb / 2, -ft, 0.0))
+        self.steer_fun_FL = chrono.ChFunctionSetpoint()
         self.steer_FL.SetAngleFunction(self.steer_fun_FL)
-        self.steer_fun_FR = chrono.ChFunction_Setpoint()
+        self.steer_fun_FR = chrono.ChFunctionSetpoint()
         self.steer_FR.SetAngleFunction(self.steer_fun_FR)
         self.max_steer = cfg.max_steer_rad
 
         # Wheels (visual only; no collisions)
-        self.wheel_FL = self._wheel_body(chrono.ChVectorD(+wb / 2, +ft, -radius), collide=False)
-        self.wheel_FR = self._wheel_body(chrono.ChVectorD(+wb / 2, -ft, -radius), collide=False)
-        self.wheel_RL = self._wheel_body(chrono.ChVectorD(-wb / 2, +rt, -radius), collide=False)
-        self.wheel_RR = self._wheel_body(chrono.ChVectorD(-wb / 2, -rt, -radius), collide=False)
+        self.wheel_FL = self._wheel_body(chrono.ChVector3d(+wb / 2, +ft, -radius), collide=False)
+        self.wheel_FR = self._wheel_body(chrono.ChVector3d(+wb / 2, -ft, -radius), collide=False)
+        self.wheel_RL = self._wheel_body(chrono.ChVector3d(-wb / 2, +rt, -radius), collide=False)
+        self.wheel_RR = self._wheel_body(chrono.ChVector3d(-wb / 2, -rt, -radius), collide=False)
 
         # Front revolutes
-        self.rev_FL = self._revolute(self.wheel_FL, self.upright_FL, chrono.ChVectorD(+wb / 2, +ft, -radius))
-        self.rev_FR = self._revolute(self.wheel_FR, self.upright_FR, chrono.ChVectorD(+wb / 2, -ft, -radius))
+        self.rev_FL = self._revolute(self.wheel_FL, self.upright_FL, chrono.ChVector3d(+wb / 2, +ft, -radius))
+        self.rev_FR = self._revolute(self.wheel_FR, self.upright_FR, chrono.ChVector3d(+wb / 2, -ft, -radius))
 
         # Solid rear axle
-        axle_pos = chrono.ChVectorD(-wb / 2, 0.0, -radius)
+        axle_pos = chrono.ChVector3d(-wb / 2, 0.0, -radius)
         self.axle = chrono.ChBody()
         self.axle.SetName(name + "_axle")
         self.axle.SetMass(8.0)
-        self.axle.SetInertiaXX(chrono.ChVectorD(0.05, 0.02, 0.05))
+        self.axle.SetInertiaXX(chrono.ChVector3d(0.05, 0.02, 0.05))
         self.axle.SetPos(self.chassis.GetPos() + self.chassis.GetRot().Rotate(axle_pos))
         self.axle.SetRot(self.chassis.GetRot())
-        self.axle.SetCollide(False)
-        rod = chrono.ChCylinderShape()
-        rod.GetCylinderGeometry().p1 = chrono.ChVectorD(0, -rt, 0)
-        rod.GetCylinderGeometry().p2 = chrono.ChVectorD(0, +rt, 0)
-        rod.GetCylinderGeometry().rad = 0.02
-        self.axle.AddVisualShape(rod)
+        self.axle.EnableCollision(False)
+        rod = chrono.ChVisualShapeCylinder(0.02, 2 * rt)
+        rod_frame = chrono.ChFramed()
+        rod_frame.SetRot(chrono.QuatFromAngleX(math.pi / 2))
+        self.axle.AddVisualShape(rod, rod_frame)
         sys.Add(self.axle)
-        frame = chrono.ChFrameD()
+        frame = chrono.ChFramed()
         frame.SetPos(self.chassis.GetPos() + self.chassis.GetRot().Rotate(axle_pos))
-        frame.SetRot(self.chassis.GetRot() * chrono.Q_from_AngAxis(math.pi / 2, chrono.ChVectorD(0, 0, 1)))
+        frame.SetRot(self.chassis.GetRot() * chrono.QuatFromAngleAxis(math.pi / 2, chrono.ChVector3d(0, 0, 1)))
         self.axle_rev = chrono.ChLinkLockRevolute()
         self.axle_rev.Initialize(self.axle, self.chassis, frame)
         sys.Add(self.axle_rev)
         self.lock_RL = chrono.ChLinkLockLock()
-        self.lock_RL.Initialize(self.wheel_RL, self.axle, chrono.ChCoordsysD(self.wheel_RL.GetPos(), self.wheel_RL.GetRot()))
+        frame_rl = chrono.ChFramed()
+        frame_rl.SetPos(self.wheel_RL.GetPos())
+        frame_rl.SetRot(self.wheel_RL.GetRot())
+        self.lock_RL.Initialize(self.wheel_RL, self.axle, frame_rl)
         sys.Add(self.lock_RL)
         self.lock_RR = chrono.ChLinkLockLock()
-        self.lock_RR.Initialize(self.wheel_RR, self.axle, chrono.ChCoordsysD(self.wheel_RR.GetPos(), self.wheel_RR.GetRot()))
+        frame_rr = chrono.ChFramed()
+        frame_rr.SetPos(self.wheel_RR.GetPos())
+        frame_rr.SetRot(self.wheel_RR.GetRot())
+        self.lock_RR.Initialize(self.wheel_RR, self.axle, frame_rr)
         sys.Add(self.lock_RR)
 
         # Engine/brake torque motors
         self.engine_motor = chrono.ChLinkMotorRotationTorque()
-        self.engine_fun = chrono.ChFunction_Setpoint()
+        self.engine_fun = chrono.ChFunctionSetpoint()
         self.engine_motor.Initialize(self.axle, self.chassis, frame)
         self.engine_motor.SetTorqueFunction(self.engine_fun)
         sys.Add(self.engine_motor)
         self.brake_motor = chrono.ChLinkMotorRotationTorque()
-        self.brake_fun = chrono.ChFunction_Setpoint()
+        self.brake_fun = chrono.ChFunctionSetpoint()
         self.brake_motor.Initialize(self.axle, self.chassis, frame)
         self.brake_motor.SetTorqueFunction(self.brake_fun)
         sys.Add(self.brake_motor)
@@ -172,21 +168,18 @@ class GoKart:
     def _make_upright(self, pos_local):
         body = chrono.ChBody()
         body.SetMass(2.0)
-        body.SetInertiaXX(chrono.ChVectorD(0.02, 0.02, 0.02))
+        body.SetInertiaXX(chrono.ChVector3d(0.02, 0.02, 0.02))
         body.SetPos(self.chassis.GetPos() + self.chassis.GetRot().Rotate(pos_local))
         body.SetRot(self.chassis.GetRot())
-        body.SetCollide(False)
-        cyl = chrono.ChCylinderShape()
-        cyl.GetCylinderGeometry().p1 = chrono.ChVectorD(0, 0, -0.1)
-        cyl.GetCylinderGeometry().p2 = chrono.ChVectorD(0, 0, 0.1)
-        cyl.GetCylinderGeometry().rad = 0.03
+        body.EnableCollision(False)
+        cyl = chrono.ChVisualShapeCylinder(0.03, 0.2)
         body.AddVisualShape(cyl)
         self.sys.Add(body)
         return body
 
     def _steer_motor(self, upright, pos_local):
         motor = chrono.ChLinkMotorRotationAngle()
-        frame = chrono.ChFrameD()
+        frame = chrono.ChFramed()
         frame.SetPos(self.chassis.GetPos() + self.chassis.GetRot().Rotate(pos_local))
         frame.SetRot(self.chassis.GetRot())
         motor.Initialize(upright, self.chassis, frame)
@@ -199,35 +192,28 @@ class GoKart:
         wheel.SetMass(cfg.wheel_mass)
         I_y = 0.5 * cfg.wheel_mass * (cfg.wheel_radius**2)
         I_xz = (1 / 12) * cfg.wheel_mass * (3 * cfg.wheel_radius**2 + cfg.wheel_width**2)
-        wheel.SetInertiaXX(chrono.ChVectorD(I_xz, I_y, I_xz))
+        wheel.SetInertiaXX(chrono.ChVector3d(I_xz, I_y, I_xz))
         wheel.SetPos(self.chassis.GetPos() + self.chassis.GetRot().Rotate(pos_local))
         wheel.SetRot(self.chassis.GetRot())
-        wheel.SetCollide(collide)
         if collide:
-            cmod = wheel.GetCollisionModel()
-            cmod.ClearModel()
-            cmod.AddCylinder(
-                self.mat_wheel,
-                cfg.wheel_radius,
-                cfg.wheel_radius,
-                cfg.wheel_width / 2,
-                chrono.ChVectorD(0, 0, 0),
-                chrono.Q_from_AngX(math.pi / 2),
-            )
-            cmod.BuildModel()
-        rim = chrono.ChCylinderShape()
-        rim.GetCylinderGeometry().p1 = chrono.ChVectorD(0, -cfg.wheel_width / 2, 0)
-        rim.GetCylinderGeometry().p2 = chrono.ChVectorD(0, cfg.wheel_width / 2, 0)
-        rim.GetCylinderGeometry().rad = cfg.wheel_radius
-        wheel.AddVisualShape(rim)
+            frame = chrono.ChFramed()
+            frame.SetRot(chrono.QuatFromAngleX(math.pi / 2))
+            wheel.AddCollisionShape(chrono.ChCollisionShapeCylinder(self.mat_wheel, cfg.wheel_radius, cfg.wheel_width), frame)
+            wheel.EnableCollision(True)
+        else:
+            wheel.EnableCollision(False)
+        rim = chrono.ChVisualShapeCylinder(cfg.wheel_radius, cfg.wheel_width)
+        rim_frame = chrono.ChFramed()
+        rim_frame.SetRot(chrono.QuatFromAngleX(math.pi / 2))
+        wheel.AddVisualShape(rim, rim_frame)
         self.sys.Add(wheel)
         return wheel
 
     def _revolute(self, child, parent, pos_local_parent):
         rev = chrono.ChLinkLockRevolute()
-        frame = chrono.ChFrameD()
+        frame = chrono.ChFramed()
         frame.SetPos(parent.GetPos() + parent.GetRot().Rotate(pos_local_parent))
-        frame.SetRot(parent.GetRot() * chrono.Q_from_AngAxis(math.pi / 2, chrono.ChVectorD(0, 0, 1)))
+        frame.SetRot(parent.GetRot() * chrono.QuatFromAngleAxis(math.pi / 2, chrono.ChVector3d(0, 0, 1)))
         rev.Initialize(child, parent, frame)
         self.sys.Add(rev)
         return rev
@@ -249,7 +235,7 @@ class GoKart:
 
     def update_axle_torques(self):
         now = self.sys.GetChTime()
-        omega_axle = self.axle.GetWvel_loc().y
+        omega_axle = self.axle.GetAngVelLocal().y
         w_abs = abs(omega_axle)
         tau_engine = self._engine_tau_from_curve(w_abs)
         tau_brake = -math.copysign(self.cfg.max_brake_torque * self.last_brake, omega_axle) if w_abs > 1e-3 else 0.0
@@ -257,7 +243,7 @@ class GoKart:
         self.brake_fun.SetSetpoint(tau_brake, now)
 
     def apply_tire_forces(self, dt):
-        tau = abs(self.engine_fun.Get_y(self.sys.GetChTime()))
+        tau = abs(self.engine_fun.GetVal(self.sys.GetChTime()))
         Fx_rear_each = tau / max(1e-6, self.cfg.wheel_radius) / 2.0
         for binding, fx in (
             (self.tire_FL, 0.0),
@@ -272,14 +258,17 @@ class GoKart:
 
     def get_state(self):
         pos = self.chassis.GetPos()
-        vel = self.chassis.GetPos_dt()
-        yaw = chrono.ChQuaternion_to_Euler123(self.chassis.GetRot()).z
+        vel = self.chassis.GetPosDt()
+        angles = chrono.AngleSetFromQuat(
+            chrono.RotRepresentation_CARDAN_ANGLES_ZYX, self.chassis.GetRot()
+        )
+        yaw = angles.angles.z
         return {
             "id": self.name,
             "pos": (pos.x, pos.y, pos.z),
             "yaw": yaw,
             "speed": vel.Length(),
-            "axle_omega": self.axle.GetWvel_loc().y,
+            "axle_omega": self.axle.GetAngVelLocal().y,
             "inputs": {
                 "throttle": self.last_throttle,
                 "brake": self.last_brake,
