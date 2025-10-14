@@ -4,15 +4,18 @@ Async WebSocket server that drives the Chrono simulation.
 
 import asyncio
 import json
+import logging
 import math
 import time
 
 import websockets
 from pychrono import core as chrono
 from .config import KartConfig, rad
-from .drivers import ConstantDriver
+from .drivers import ConstantDriver, SineWaveDriver, IdleDriver
 from .track import build_oval_path
 from .world import add_track_visual, build_ground, spawn_karts
+
+logger = logging.getLogger(__name__)
 
 
 class SimServer:
@@ -29,13 +32,42 @@ class SimServer:
         - All fields optional; absent ones remain unchanged.
     """
 
-    def __init__(self, host="127.0.0.1", port=8765, fps=60, step=1e-3, num_karts=4):
+    def __init__(self, host="127.0.0.1", port=8765, fps=60, step=1e-3, num_karts=4, scenario=None):
         self.host = host
         self.port = port
         self.target_fps = fps
         self.dt_broadcast = 1.0 / max(1, fps)
         self.step = step
         self.num_karts = num_karts
+        self.scenario = scenario or {}
+        self.allow_client_control = True
+        self.scenario_duration = float(self.scenario.get("duration_s", 0.0)) if self.scenario else 0.0
+        if self.scenario:
+            physics_dt = self.scenario.get("physics_dt")
+            if physics_dt:
+                self.step = physics_dt
+            stream_hz = self.scenario.get("stream_hz") or fps
+            self.target_fps = stream_hz
+            self.dt_broadcast = 1.0 / max(1e-9, stream_hz)
+            control_cfg = self.scenario.get("control", {})
+            self.allow_client_control = bool(control_cfg.get("client_enabled", True))
+        self.ai_driver_params = {
+            "amplitude_deg": 20.0,
+            "frequency_hz": 0.5,
+            "throttle": 0.5,
+            "brake": 0.0,
+        }
+        if self.scenario:
+            kart_cfg = self.scenario.get("kart", {})
+            if kart_cfg:
+                self.ai_driver_params["throttle"] = kart_cfg.get("throttle", 0.5)
+                steer_cfg = kart_cfg.get("steer", {}) or {}
+                if steer_cfg.get("kind") == "sine":
+                    self.ai_driver_params["amplitude_deg"] = steer_cfg.get("amplitude_deg", 20.0)
+                    self.ai_driver_params["frequency_hz"] = steer_cfg.get("freq_hz", 0.5)
+        init_cfg = self.scenario.get("init", {}) if self.scenario else {}
+        self.scenario_push_speed = init_cfg.get("push_off_speed", 0.0)
+        self.scenario_push_duration = init_cfg.get("push_off_duration", 0.3)
 
         # runtime state
         self.paused = False
@@ -47,6 +79,7 @@ class SimServer:
 
         # per-kart input overrides (None = use AI)
         self.inputs_override = {}  # id -> {"throttle":..., "brake":..., "steer":...}
+        self.human_controlled = set()
 
         # Build world
         self._rebuild_world()
@@ -63,9 +96,55 @@ class SimServer:
         self.path, self.track_pts = build_oval_path(chrono.ChVector3d(0, 0, 0), straight_len=40.0, radius=12.0)
         add_track_visual(self.ground, self.path)
         self.karts = spawn_karts(self.sys, cfg, n=self.num_karts, spacing=2.8)
-        self.drivers = [ConstantDriver(throttle=0.5, steer_deg=-20.0, brake=0.0) for _ in self.karts]
+        self.drivers = [self._default_driver() for _ in self.karts]
+        self._apply_human_driver_modes()
         # reset overrides
         self.inputs_override.clear()
+        # Ensure overrides exist for human-controlled karts
+        for kart in self.karts:
+            if kart.name in self.human_controlled:
+                self.inputs_override.setdefault(kart.name, {"throttle": None, "brake": None, "steer": None})
+
+    def _default_driver(self):
+        params = self.ai_driver_params
+        return SineWaveDriver(
+            amplitude_deg=params.get("amplitude_deg", 20.0),
+            frequency_hz=params.get("frequency_hz", 0.5),
+            throttle=params.get("throttle", 0.5),
+            brake=params.get("brake", 0.0),
+        )
+
+    def _apply_human_driver_modes(self):
+        if not self.allow_client_control:
+            self.human_controlled.clear()
+        for idx, kart in enumerate(self.karts):
+            if kart.name in self.human_controlled:
+                if not isinstance(self.drivers[idx], IdleDriver):
+                    self.drivers[idx] = IdleDriver()
+            else:
+                if not isinstance(self.drivers[idx], SineWaveDriver):
+                    self.drivers[idx] = self._default_driver()
+
+    def _apply_push_off(self, sim_t):
+        if self.scenario_push_speed <= 0.0 or sim_t > self.scenario_push_duration:
+            return
+        target_speed = self.scenario_push_speed
+        for kart in self.karts:
+            vel_vec = kart.chassis.GetPosDt()
+            if vel_vec.Length() >= target_speed:
+                continue
+            forward_world = kart.chassis.GetRot().Rotate(chrono.ChVector3d(1.0, 0.0, 0.0))
+            norm = forward_world.Length()
+            if norm < 1e-9:
+                continue
+            scale = target_speed / norm
+            kart.chassis.SetLinVel(
+                chrono.ChVector3d(
+                    forward_world.x * scale,
+                    forward_world.y * scale,
+                    forward_world.z * scale,
+                )
+            )
 
     # ---------- payloads ----------
 
@@ -108,7 +187,15 @@ class SimServer:
                     "x": state["pos"][0],
                     "y": state["pos"][1],
                     "z": state["pos"][2],
+                    "vx": state["vel"][0],
+                    "vy": state["vel"][1],
+                    "vz": state["vel"][2],
+                    "qx": state["quat"][0],
+                    "qy": state["quat"][1],
+                    "qz": state["quat"][2],
+                    "qw": state["quat"][3],
                     "yaw": state["yaw"],
+                    "yaw_rate": state["yaw_rate"],
                     "speed": state["speed"],
                     "axle_omega": state["axle_omega"],
                     "inputs": state["inputs"],
@@ -168,6 +255,7 @@ class SimServer:
           {"type":"reset"}
           {"type":"input","id":"kart_1","throttle":0.5,"brake":0.1,"steer":-0.2}
           # optional: "steer_deg": -10.0 (overrides 'steer' if both present)
+          {"type":"claim","id":"kart_1","playable":true}  # mark kart as human-controlled
         """
         msg_type = obj.get("type")
         if msg_type == "pause":
@@ -178,6 +266,8 @@ class SimServer:
             self._rebuild_world()
             await self._broadcast_json(self._init_payload())
         elif msg_type == "input":
+            if not self.allow_client_control:
+                return
             kart_id = obj.get("id")
             if not kart_id:
                 return
@@ -200,8 +290,37 @@ class SimServer:
                     steer = float(steer)
                 except Exception:
                     steer = None
-                override["steer"] = steer
+            override["steer"] = steer
             self.inputs_override[kart_id] = override
+        elif msg_type == "claim":
+            if not self.allow_client_control:
+                return
+            kart_id = obj.get("id")
+            if not kart_id:
+                return
+            playable = bool(obj.get("playable", True))
+            match = None
+            for kart in self.karts:
+                if kart.name == kart_id:
+                    match = kart
+                    break
+            if match is None:
+                return
+            if playable:
+                if kart_id in self.human_controlled:
+                    logger.info("Kart %s playable mode refreshed by client", kart_id)
+                else:
+                    logger.info("Kart %s claimed in playable mode", kart_id)
+                self.human_controlled.add(kart_id)
+                self.inputs_override.setdefault(kart_id, {"throttle": None, "brake": None, "steer": None})
+            else:
+                if kart_id in self.human_controlled:
+                    logger.info("Kart %s released back to viewing mode", kart_id)
+                else:
+                    logger.info("Kart %s set to viewing mode", kart_id)
+                self.human_controlled.discard(kart_id)
+                self.inputs_override.pop(kart_id, None)
+            self._apply_human_driver_modes()
         # else: ignore unknown types
 
     # ---------- sim loop ----------
@@ -273,12 +392,17 @@ class SimServer:
                         # apply lateral tires even when paused to keep contact forces ready
                         kart.apply_tire_forces(self.step)
 
+                    self._apply_push_off(sim_t)
+
                     # advance physics only if not paused
                     if not self.paused:
                         self.sys.DoStepDynamics(self.step)
 
                 # one broadcast per frame
                 await self._broadcast_json(self._state_payload())
+                if self.scenario_duration and self.sys.GetChTime() >= self.scenario_duration:
+                    logger.info("Scenario duration reached (%.2fs); stopping simulation", self.scenario_duration)
+                    self.stop()
                 if self.offline_mode and self.sys.GetChTime() >= (self._offline_end_time or 0.0):
                     print("Offline simulation complete; shutting down.")
                     self.stop()

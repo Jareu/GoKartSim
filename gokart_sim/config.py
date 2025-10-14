@@ -10,6 +10,7 @@ class KartConfig:
     chassis_width = 1.2
     chassis_height = 0.25
     chassis_mass = 70.0
+    yaw_inertia = None  # optional override
 
     wheel_radius = 0.17
     wheel_width = 0.10
@@ -23,6 +24,7 @@ class KartConfig:
     terrain_restitution = 0.01
 
     max_steer_rad = math.radians(30)
+    cg_front_frac = 0.5  # distance from CG to front axle as fraction of wheelbase
 
     torque_curve = [
         (0.0, 30.0),
@@ -45,6 +47,38 @@ class KartConfig:
 
     step_size = 1e-3
     gravity = chrono.ChVector3d(0, 0, -9.81)
+
+    @classmethod
+    def axle_cornering_stiffness(cls):
+        """Return (Cf, Cr) aggregated per axle."""
+        cf = getattr(cls, "axle_cornering_stiffness_front", None)
+        cr = getattr(cls, "axle_cornering_stiffness_rear", None)
+        if cf is None:
+            cf = 2.0 * cls.tire_Calpha_front
+        if cr is None:
+            cr = 2.0 * cls.tire_Calpha_rear
+        return cf, cr
+
+    @classmethod
+    def dynamics_params(cls):
+        """Return dictionary of key vehicle parameters for linear models."""
+        m = cls.chassis_mass
+        L = cls.wheelbase
+        a = getattr(cls, "cg_front_distance", cls.cg_front_frac * L)
+        b = getattr(cls, "cg_rear_distance", L - a)
+        Iz = cls.yaw_inertia
+        if Iz is None:
+            Iz = (1.0 / 12.0) * m * (L**2)
+        Cf, Cr = cls.axle_cornering_stiffness()
+        return {
+            "m": m,
+            "L": L,
+            "a": a,
+            "b": b,
+            "Iz": Iz,
+            "Cf": Cf,
+            "Cr": Cr,
+        }
 
 
 def make_nsc_material(mu: float, cr: float = 0.01) -> chrono.ChContactMaterialNSC:

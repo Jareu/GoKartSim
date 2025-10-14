@@ -259,14 +259,21 @@ class GoKart:
     def get_state(self):
         pos = self.chassis.GetPos()
         vel = self.chassis.GetPosDt()
+        rot = self.chassis.GetRot()
         angles = chrono.AngleSetFromQuat(
-            chrono.RotRepresentation_CARDAN_ANGLES_ZYX, self.chassis.GetRot()
+            chrono.RotRepresentation_CARDAN_ANGLES_ZYX, rot
         )
         yaw = angles.angles.z
+        quat = (rot.e1, rot.e2, rot.e3, rot.e0)
+        lin_vel = (vel.x, vel.y, vel.z)
+        yaw_rate = self.chassis.GetAngVelLocal().z
         return {
             "id": self.name,
             "pos": (pos.x, pos.y, pos.z),
+            "vel": lin_vel,
+            "quat": quat,
             "yaw": yaw,
+            "yaw_rate": yaw_rate,
             "speed": vel.Length(),
             "axle_omega": self.axle.GetAngVelLocal().y,
             "inputs": {
