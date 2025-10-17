@@ -22,19 +22,6 @@ Frame = getattr(chrono, "ChFramed",
         getattr(chrono, "ChFrameD",
         getattr(chrono, "ChFrame", None)))
 
-def q_from_angx(angle: float):
-    """Return a quaternion representing a rotation about the X-axis by angle."""
-    if hasattr(chrono, "Q_from_AngX"):
-        return chrono.Q_from_AngX(angle)
-    if hasattr(chrono, "QuatFromAngleX"):
-        return chrono.QuatFromAngleX(angle)
-    # fallback: use axis-angle
-    if hasattr(chrono, "Q_from_AngAxis"):
-        return chrono.Q_from_AngAxis(angle, Vec(1, 0, 0))
-    # manual: scalar-first quaternion (w, x, y, z)
-    half = angle * 0.5
-    return Quat(math.cos(half), math.sin(half), 0.0, 0.0)
-
 def set_gravity(system, g_vec: "Vec"):
     for name in ("SetGravitationalAcceleration", "Set_G_acc", "Set_G_acceleration", "SetGravity"):
         if hasattr(system, name):
@@ -74,7 +61,8 @@ RENDER_FPS = 60
 
 WHEEL_RADIUS = 0.30
 WHEEL_WIDTH  = 0.10
-GROUND_THICK = 0.20  # Thicker ground for better collision detection
+GROUND_THICK = 10.0  # Thicker ground for better collision detection
+COLLISION_ENVELOPE = 0.004  # 4mm - more stable than 1mm for NSC solver
 
 # Friction parameters for butyl rubber tire on dry bitumen
 # Static friction coefficient: ~0.9-1.0 (initial grip)
@@ -96,46 +84,24 @@ SCREEN_W, SCREEN_H = 1000, 420
 BG = (20, 28, 38)
 WHITE = (240, 240, 240)
 ENGINE_COLOR = (180, 200, 220)
-ENGINE_DIRECTION = -1.0
 
 # --------------------------------------------------
 # Build Chrono system
 # --------------------------------------------------
 system = chrono.ChSystemNSC()
 
-# Configure solver for better contact handling
-if hasattr(system, "SetSolverMaxIterations"):
-    system.SetSolverMaxIterations(300)
-if hasattr(system, "SetMaxItersSolverSpeed"):
-    system.SetMaxItersSolverSpeed(300)
-if hasattr(system, "SetSolverForceTolerance"):
-    system.SetSolverForceTolerance(1e-10)
-if hasattr(system, "SetSolverTolerance"):
-    system.SetSolverTolerance(1e-10)
-
-# Set collision envelope (safety margin) to be very small
+# Set collision system type to BULLET for better performance
 if hasattr(system, "SetCollisionSystemType"):
-    # Use bullet collision system for better performance
     try:
         system.SetCollisionSystemType(chrono.ChCollisionSystem.Type_BULLET)
     except:
         pass
-        
-# Try to get and configure collision system
-if hasattr(system, "GetCollisionSystem"):
-    col_sys = system.GetCollisionSystem()
-    if col_sys and hasattr(col_sys, "SetEnvelope"):
-        col_sys.SetEnvelope(0.001)  # Very small envelope - 1mm
-        print(f"Set collision envelope to 0.001 m")
-    if col_sys and hasattr(col_sys, "SetContactBreakingThreshold"):
-        col_sys.SetContactBreakingThreshold(0.001)
-        print(f"Set contact breaking threshold to 0.001 m")
 
 # Set gravity (pointing downward in Y is typical, but your axis conventions may differ)
 # Here, assuming the wheel rolls in the X-direction, vertical is Y:
 if Vec is None:
     raise RuntimeError("Could not resolve a Vec class alias.")
-set_gravity(system, Vec(0, -9.81*0.02, 0))
+set_gravity(system, Vec(0, -9.81, 0))
 
 # Contact material with realistic tire-road friction
 try:
@@ -149,38 +115,17 @@ except AttributeError:
     if hasattr(mat, "SetRestitution"):
         mat.SetRestitution(REST_COEFF)
 
-# Try to set static and kinetic friction separately if supported
-if hasattr(mat, "SetStaticFriction") and hasattr(mat, "SetKineticFriction"):
-    mat.SetStaticFriction(MU_STATIC_FRICTION)
-    mat.SetKineticFriction(MU_KINETIC_FRICTION)
-    print(f"Set static friction: {MU_STATIC_FRICTION:.2f}, kinetic friction: {MU_KINETIC_FRICTION:.2f}")
-elif hasattr(mat, "SetSfriction") and hasattr(mat, "SetKfriction"):
-    # Alternative API naming
-    mat.SetSfriction(MU_STATIC_FRICTION)
-    mat.SetKfriction(MU_KINETIC_FRICTION)
-    print(f"Set static friction: {MU_STATIC_FRICTION:.2f}, kinetic friction: {MU_KINETIC_FRICTION:.2f}")
-else:
-    print(f"Using single friction coefficient: {MU_FRICTION:.2f} (NSC solver limitation)")
-    print(f"  (Static: {MU_STATIC_FRICTION:.2f}, Kinetic: {MU_KINETIC_FRICTION:.2f} not separately supported)")
-
 # Ground (fixed)
-ground = chrono.ChBodyEasyBox(20.0, GROUND_THICK, 2.0, 1000.0, True, True, mat)
+ground = chrono.ChBodyEasyBox(200.0, GROUND_THICK, 200.0, 1000.0, True, True, mat)
 # Position it so its top is at Y = 0
 ground.SetPos(Vec(0, -GROUND_THICK * 0.5, 0))
 set_fixed(ground, True)
-if hasattr(ground, "EnableCollision"):
-    ground.EnableCollision(True)
-if hasattr(ground, "SetCollide"):
-    ground.SetCollide(True)
+ground.EnableCollision(True)
 
-# Try to set smaller collision margin on the ground
-if hasattr(ground, 'GetCollisionModel'):
-    col_model = ground.GetCollisionModel()
-    if col_model:
-        if hasattr(col_model, 'SetEnvelope'):
-            col_model.SetEnvelope(0.001)  # 1mm envelope
-        if hasattr(col_model, 'SetSafeMargin'):
-            col_model.SetSafeMargin(0.001)  # 1mm safe margin
+col_model = ground.GetCollisionModel()
+if col_model:
+    col_model.SetEnvelope(COLLISION_ENVELOPE)
+    col_model.SetSafeMargin(COLLISION_ENVELOPE * 0.5)  # Safe margin is typically smaller
 
 system.Add(ground)
 
@@ -191,45 +136,80 @@ if AXIS_Z is None:
     raise RuntimeError("Could not resolve Chrono axis enum for Z.")
 wheel = chrono.ChBodyEasyCylinder(AXIS_Z, WHEEL_RADIUS, WHEEL_WIDTH, WHEEL_DENSITY, True, True, mat)
 # Position wheel at exactly one wheel radius above ground (ground top is at Y=0)
-# NOTE: Due to Chrono NSC solver contact penetration, the wheel may settle slightly lower
-# Starting at WHEEL_RADIUS ensures geometrically correct initial position
-wheel.SetPos(Vec(-2.0, 2*WHEEL_RADIUS, 0))
+# Add small offset (2x envelope) to account for collision margin and prevent initial penetration
+# This ensures the wheel starts in proper contact without falling from height
+initial_offset = COLLISION_ENVELOPE * 2.0
+wheel.SetPos(Vec(-2.0, WHEEL_RADIUS + initial_offset, 0))
 
-if hasattr(wheel, "EnableCollision"):
-    wheel.EnableCollision(True)
-if hasattr(wheel, "SetCollide"):
-    wheel.SetCollide(True)
+wheel.EnableCollision(True)
 
-# Try to set smaller collision margin on the wheel
-if hasattr(wheel, 'GetCollisionModel'):
-    col_model = wheel.GetCollisionModel()
-    if col_model:
-        if hasattr(col_model, 'SetEnvelope'):
-            col_model.SetEnvelope(0.001)  # 1mm envelope
-            print(f"Set wheel collision envelope to 0.001m")
-        if hasattr(col_model, 'SetSafeMargin'):
-            col_model.SetSafeMargin(0.001)  # 1mm safe margin
-            print(f"Set wheel safe margin to 0.001m")
-        # Check the actual envelope
-        if hasattr(col_model, 'GetEnvelope'):
-            actual_envelope = col_model.GetEnvelope()
-            print(f"Wheel collision envelope: {actual_envelope:.4f}m")
-        if hasattr(col_model, 'f'):
-            actual_margin = col_model.GetSafeMargin()
-            print(f"Wheel safe margin: {actual_margin:.4f}m")
+col_model = wheel.GetCollisionModel()
+
+if col_model:
+    col_model.SetEnvelope(COLLISION_ENVELOPE)
+    col_model.SetSafeMargin(COLLISION_ENVELOPE * 0.5)
 
 system.Add(wheel)
+
+# Create motor frame helper function
+def create_motor_frame(position):
+    """Helper to create frame with compatibility across Chrono versions."""
+    if Frame is not None:
+        return Frame(position, Quat(1, 0, 0, 0))
+    if Coordsys is not None:
+        return Coordsys(position, Quat(1, 0, 0, 0))
+    if hasattr(chrono, "ChFramed"):
+        return chrono.ChFramed(position, Quat(1, 0, 0, 0))
+    if hasattr(chrono, "ChFrameD"):
+        return chrono.ChFrameD(position, Quat(1, 0, 0, 0))
+    raise RuntimeError("Could not create frame for motor initialization")
+
+def set_motor_spindle_free(motor_link):
+    """Helper to set spindle constraint to FREE across Chrono versions."""
+    if hasattr(chrono, "ChLinkMotorRotation"):
+        try:
+            motor_link.SetSpindleConstraint(chrono.ChLinkMotorRotation.SpindleConstraint_FREE)
+        except:
+            try:
+                motor_link.SetSpindleConstraint(chrono.ChLinkMotorRotation.FREE)
+            except:
+                pass
+    elif hasattr(motor_link, "SetSpindleConstraint"):
+        try:
+            motor_link.SetSpindleConstraint(0)  # 0 typically means FREE
+        except:
+            pass
+
+# Create ENGINE motor (best practice: separate motors for engine and brake)
+# Engine motor connects wheel to ground and applies driving torque about Z-axis
+engine_motor = chrono.ChLinkMotorRotationTorque()
+engine_motor.Initialize(wheel, ground, create_motor_frame(wheel.GetPos()))
+set_motor_spindle_free(engine_motor)
+engine_motor.SetTorqueFunction(chrono.ChFunctionConst(0.0))
+system.Add(engine_motor)
+
+# Create BRAKE motor (applies torque opposing wheel rotation)
+# Using a separate motor ensures brake torque is independent and always opposes motion
+brake_motor = chrono.ChLinkMotorRotationTorque()
+brake_motor.Initialize(wheel, ground, create_motor_frame(wheel.GetPos()))
+set_motor_spindle_free(brake_motor)
+brake_motor.SetTorqueFunction(chrono.ChFunctionConst(0.0))
+system.Add(brake_motor)
 
 print(f"\n=== Initialization ===")
 print(f"WHEEL_RADIUS: {WHEEL_RADIUS:.3f} m")
 print(f"GROUND_THICK: {GROUND_THICK:.3f} m")
+print(f"COLLISION_ENVELOPE: {COLLISION_ENVELOPE:.4f} m")
 print(f"Ground center pos: Y={ground.GetPos().y:.3f} m")
 print(f"Ground top surface: Y={0:.3f} m")
 print(f"Wheel initial center pos: Y={wheel.GetPos().y:.3f} m")
-print(f"Wheel bottom at start: Y={wheel.GetPos().y - WHEEL_RADIUS:.3f} m (touches ground)")
+print(f"Wheel bottom at start: Y={wheel.GetPos().y - WHEEL_RADIUS:.3f} m (near ground + envelope offset)")
+print(f"Initial offset from geometric contact: {initial_offset:.4f} m")
 print(f"Wheel mass: {wheel.GetMass():.3f} kg")
+print(f"Engine motor created: Using ChLinkMotorRotationTorque for driving torque")
+print(f"Brake motor created: Separate motor for brake torque (always opposes motion)")
 print(f"\nMaterial: Butyl rubber tire on dry bitumen")
-print(f"Friction coefficient (effective): {MU_FRICTION:.2f}")
+print(f"Friction coefficient: {MU_FRICTION:.2f} (Static: {MU_STATIC_FRICTION:.2f}, Kinetic: {MU_KINETIC_FRICTION:.2f})")
 print(f"Restitution coefficient: {REST_COEFF:.2f}")
 
 # Check collision model
@@ -246,19 +226,17 @@ if hasattr(ground, 'GetCollisionModel'):
 
 # Check number of bodies
 bodies = system.GetBodies()
-if hasattr(bodies, 'size'):
-    print(f"System has {bodies.size()} bodies")
-else:
-    print(f"System has {len(bodies)} bodies")
-print(f"\nNOTE: Chrono NSC solver allows contact penetration for performance.")
-print(f"Wheel starts at geometrically correct position (center at {WHEEL_RADIUS:.3f}m).\n")
+print(f"System has {len(bodies)} bodies")
+print(f"\nNOTE: Chrono NSC solver uses contact penetration for stability.")
+print(f"Wheel starts slightly above geometric contact to prevent initial penetration.")
+print(f"The small offset ({initial_offset:.4f}m) allows solver to establish stable contact.\n")
 
 # --------------------------------------------------
 # Pygame setup
 # --------------------------------------------------
 pygame.init()
 screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
-pygame.display.set_caption("Chrono Wheel: UP / DOWN control")
+pygame.display.set_caption("Chrono Wheel: LEFT/RIGHT for reverse/forward, DOWN for brake")
 clock = pygame.time.Clock()
 font = pygame.font.SysFont("consolas", 16)
 
@@ -279,56 +257,57 @@ def regular_ngon_points(n=6, radius_px=14, angle_rad=0.0):
 # --------------------------------------------------
 throttle = 0.0
 brake = 0.0
+engine_direction = 0.0  # 1.0 for forward, -1.0 for reverse, 0.0 for neutral
 paused = False
 
 wheel_angle_y = 0.0  # to visualize rotation
-_desired_omega = None  # Global to store desired angular velocity
 
 def step_physics(dt):
-    global wheel_angle_y, _desired_omega
+    """
+    Step the physics simulation using proper Chrono motor torque application.
+    
+    BEST PRACTICE: Uses separate ChLinkMotorRotationTorque instances for engine and brake.
+    This is the idiomatic Project Chrono approach because:
+    
+    1. Torques are integrated through the constraint solver (physics-accurate)
+    2. Works seamlessly with contacts, friction, and other forces
+    3. Maintains energy conservation and stability
+    4. No manual integration or velocity manipulation needed
+    5. Independent control of engine and brake ensures correct behavior
+    
+    Engine motor: Applies driving torque in the configured direction
+    Brake motor: Always applies torque opposing the wheel's angular velocity
+    """
+    global wheel_angle_y
 
     omegaZ = get_omega_z(wheel)  # Angular velocity about Z axis
 
+    # Calculate ENGINE torque (affected by engine_direction)
     engine_torque = MAX_ENGINE_TORQUE * max(0.0, min(1.0, throttle))
-    brake_torque = MAX_BRAKE_TORQUE * max(0.0, min(1.0, brake)) * (
-        -1.0 if omegaZ > 0 else (1.0 if omegaZ < 0 else 0.0)
-    )
-
-    total_torque = engine_torque + brake_torque
+    engine_torque_signed = engine_direction * engine_torque
     
-    # Directly modify angular velocity - simple approach that avoids problematic Accumulate* API
-    if abs(total_torque) > 0.1:  # Only when significant torque
-        # Get moment of inertia (estimate for cylinder rotating about Z axis)
-        Izz = 0.5 * wheel.GetMass() * WHEEL_RADIUS * WHEEL_RADIUS
-        
-        # Calculate angular acceleration: alpha = Torque / I
-        angular_accel = total_torque / Izz
-        
-        # Get current angular velocity
-        if hasattr(wheel, 'GetAngVelParent'):
-            current_wvel = wheel.GetAngVelParent()
-        else:
-            current_wvel = Vec(0, 0, 0)
-        
-        # Calculate new angular velocity about Z axis
-        new_omega_z = current_wvel.z + ENGINE_DIRECTION * angular_accel * dt
-        new_wvel = Vec(current_wvel.x, current_wvel.y, new_omega_z)
-        
-        # Set it AFTER DoStepDynamics to add our torque effect
-        # Store for application after physics step
-        global _desired_omega
-        _desired_omega = new_omega_z
-
+    # Calculate BRAKE torque (always opposes motion, independent of engine_direction)
+    # Brake torque magnitude is proportional to brake input
+    brake_torque_magnitude = MAX_BRAKE_TORQUE * max(0.0, min(1.0, brake))
+    
+    # Brake always opposes the current angular velocity
+    if abs(omegaZ) > 0.01:  # Only apply brake if wheel is spinning
+        # Brake torque opposes motion: if ω > 0, brake is negative; if ω < 0, brake is positive
+        brake_torque_signed = -brake_torque_magnitude * (1.0 if omegaZ > 0 else -1.0)
+    else:
+        # Wheel is essentially stopped, apply no brake torque
+        brake_torque_signed = 0.0
+    
+    # Apply engine torque through engine motor (best practice)
+    engine_torque_func = chrono.ChFunctionConst(engine_torque_signed)
+    engine_motor.SetTorqueFunction(engine_torque_func)
+    
+    # Apply brake torque through brake motor (independent control)
+    brake_torque_func = chrono.ChFunctionConst(brake_torque_signed)
+    brake_motor.SetTorqueFunction(brake_torque_func)
+    
+    # Let Chrono's solver properly integrate all forces and torques
     system.DoStepDynamics(dt)
-    
-    # Apply desired angular velocity after physics step
-    if _desired_omega is not None:
-        if hasattr(wheel, 'GetAngVelParent') and hasattr(wheel, 'SetAngVelParent'):
-            current_wvel = wheel.GetAngVelParent()
-            # Blend with current velocity to not completely override physics
-            blend = 0.8  # 80% influence from our torque
-            blended_omega_z = current_wvel.z * (1 - blend) + _desired_omega * blend
-            wheel.SetAngVelParent(Vec(current_wvel.x, current_wvel.y, blended_omega_z))
 
     # Update for visualization (rotation about Z axis)
     omegaZ = get_omega_z(wheel)
@@ -344,23 +323,18 @@ def step_physics(dt):
             try:
                 if hasattr(system, 'GetContactContainer'):
                     contacts = system.GetContactContainer()
-                    if hasattr(contacts, 'GetNcontacts'):
-                        n_contacts = contacts.GetNcontacts()
-                        contact_info = f" | Contacts: {n_contacts}"
-                    elif hasattr(contacts, 'GetNumContacts'):
+                    if hasattr(contacts, 'GetNumContacts'):
                         n_contacts = contacts.GetNumContacts()
                         contact_info = f" | Contacts: {n_contacts}"
-                    else:
-                        # Try to get list of contacts
-                        if hasattr(contacts, 'GetContactList'):
-                            contact_list = contacts.GetContactList()
-                            n_contacts = len(contact_list) if contact_list else 0
-                            contact_info = f" | Contacts: {n_contacts}"
             except Exception as e:
                 if system.GetChTime() < 0.2:  # Only print error once
                     print(f"[WARNING] Could not get contact count: {e}")
         
-        print(f"Time: {system.GetChTime():.2f}s | Pos: X={wp.x:.3f} Y={wp.y:.3f} Z={wp.z:.3f} | Throttle: {throttle:.2f} | ωZ: {omegaZ:.2f} rad/s | Torque: {total_torque:.1f} Nm{contact_info}")
+        total_torque = engine_torque_signed + brake_torque_signed
+        print(f"Time: {system.GetChTime():.2f}s | Pos: X={wp.x:.3f} Y={wp.y:.3f} Z={wp.z:.3f} | "
+              f"Throttle: {throttle:.2f} Brake: {brake:.2f} | ωZ: {omegaZ:.2f} rad/s | "
+              f"Engine: {engine_torque_signed:.1f} Nm | Brake: {brake_torque_signed:.1f} Nm | "
+              f"Total: {total_torque:.1f} Nm{contact_info}")
 
 def draw():
     screen.fill(BG)
@@ -380,13 +354,14 @@ def draw():
     pygame.draw.polygon(screen, WHITE, hex_screen, 2)
 
     velx = get_linvel_x(wheel)
-    txt = f"Throttle: {throttle:.2f}   Brake: {brake:.2f}   PosX: {wp.x:.2f} m   VelX: {velx:.2f} m/s"
+    dir_str = "FWD" if engine_direction > 0 else "REV" if engine_direction < 0 else "NEU"
+    txt = f"Dir: {dir_str}   Throttle: {throttle:.2f}   Brake: {brake:.2f}   PosX: {wp.x:.2f} m   VelX: {velx:.2f} m/s"
     img = font.render(txt, True, WHITE)
     screen.blit(img, (12, 12))
     pygame.display.flip()
 
 def main():
-    global throttle, brake, paused
+    global throttle, brake, engine_direction, paused
     dt_render = 1.0 / RENDER_FPS
     last_time = time.perf_counter()
     start_time = time.perf_counter()
@@ -402,29 +377,37 @@ def main():
                     running = False
                 elif ev.key == pygame.K_SPACE:
                     paused = not paused
-                elif ev.key == pygame.K_UP:
+                elif ev.key == pygame.K_RIGHT:
                     throttle = 0.2
+                    engine_direction = -1.0  # Forward
+                elif ev.key == pygame.K_LEFT:
+                    throttle = 0.2
+                    engine_direction = 1.0  # Reverse
                 elif ev.key == pygame.K_DOWN:
                     brake = 1.0
                 elif ev.key == pygame.K_r:
-                    wheel.SetPos(Vec(-2.0, WHEEL_RADIUS + 0.001, 0))
+                    # Reset to initial position with proper offset
+                    wheel.SetPos(Vec(-2.0, WHEEL_RADIUS + initial_offset, 0))
                     if hasattr(wheel, "SetPos_dt"):
                         wheel.SetPos_dt(Vec(0, 0, 0))
                     # Reset angular velocity if possible
-                    if hasattr(wheel, "SetWvel") or hasattr(wheel, "SetWvel_par"):
-                        # Try both
+                    if hasattr(wheel, "SetWvel"):
                         try:
                             wheel.SetWvel(Vec(0,0,0))
                         except Exception:
-                            try:
-                                wheel.SetWvel_par(Vec(0,0,0))
-                            except Exception:
-                                pass
+                            pass
+                    elif hasattr(wheel, "SetWvel_par"):
+                        try:
+                            wheel.SetWvel_par(Vec(0,0,0))
+                        except Exception:
+                            pass
                     throttle = 0.0
                     brake = 0.0
+                    engine_direction = 0.0
             elif ev.type == pygame.KEYUP:
-                if ev.key == pygame.K_UP:
+                if ev.key == pygame.K_RIGHT or ev.key == pygame.K_LEFT:
                     throttle = 0.0
+                    engine_direction = 0.0
                 elif ev.key == pygame.K_DOWN:
                     brake = 0.0
 
