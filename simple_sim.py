@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+"""
+Chrono 3D Wheel Simulation with 6 DOF
+
+DETECTED CHRONO API VERSION:
+  - Clear forces method: None (auto-reset per step)
+  - Apply torque method: AccumulateTorque(idx, torque_vector, False)
+    * IMPORTANT: Must call wheel.AddAccumulator() first to get idx
+    * idx = accumulator index returned by AddAccumulator()
+    * local = False for world coordinates, True for local coordinates
+  - Collision system: BULLET (required for proper contact detection)
+"""
 import sys
 import math
 import time
@@ -17,6 +28,7 @@ try:
     from panda3d.core import AmbientLight, DirectionalLight, PointLight
     from panda3d.core import WindowProperties, AntialiasAttrib
     from panda3d.core import GeomLines, LineSegs
+    from panda3d.core import Texture, TextureStage, SamplerState, Quat as PandaQuat
 except ImportError:
     print("ERROR: Panda3D not found. Install with `pip install panda3d`")
     raise
@@ -71,7 +83,7 @@ TIME_STEP = 1.0 / 500.0
 RENDER_FPS = 60
 
 WHEEL_RADIUS = 0.30
-WHEEL_WIDTH  = 0.10
+WHEEL_WIDTH  = 0.20  # Increased width for more rotational inertia and stability
 GROUND_THICK = 10.0  # Thicker ground for better collision detection
 COLLISION_ENVELOPE = 0.004  # 4mm - more stable than 1mm for NSC solver
 
@@ -86,8 +98,9 @@ MU_FRICTION = 0.85  # Effective friction for NSC solver (between static and dyna
 REST_COEFF   = 0.01  # Small restitution to help with contact stability
 WHEEL_DENSITY = 800.0  # Butyl rubber density ~800-1200 kg/m³
 
-MAX_ENGINE_TORQUE = 50.0
-MAX_BRAKE_TORQUE  = 80.0
+MAX_ENGINE_TORQUE = 5.0   # Reduced for 6 DOF free wheel stability
+MAX_BRAKE_TORQUE  = 20.0  # Reduced for stability
+ANGULAR_DAMPING = 0.5     # Damping coefficient for angular velocity (simulates air resistance)
 
 SCREEN_W, SCREEN_H = 1280, 720
 
@@ -152,6 +165,14 @@ wheel = chrono.ChBodyEasyCylinder(AXIS_Z, WHEEL_RADIUS, WHEEL_WIDTH, WHEEL_DENSI
 initial_offset = COLLISION_ENVELOPE * 2.0
 wheel.SetPos(Vec(-2.0, WHEEL_RADIUS + initial_offset, 0))
 
+# Add damping to stabilize 6 DOF free body motion
+# Linear damping: resists translation (simulates air resistance)
+# Angular damping: resists rotation (simulates bearing friction and air resistance)
+if hasattr(wheel, 'SetLinVelDamping'):
+    wheel.SetLinVelDamping(0.1)  # Light linear damping
+if hasattr(wheel, 'SetAngVelDamping'):
+    wheel.SetAngVelDamping(0.5)  # Moderate angular damping for stability
+
 wheel.EnableCollision(True)
 
 col_model = wheel.GetCollisionModel()
@@ -162,50 +183,17 @@ if col_model:
 
 system.Add(wheel)
 
-# Create motor frame helper function
-def create_motor_frame(position):
-    """Helper to create frame with compatibility across Chrono versions."""
-    if Frame is not None:
-        return Frame(position, Quat(1, 0, 0, 0))
-    if Coordsys is not None:
-        return Coordsys(position, Quat(1, 0, 0, 0))
-    if hasattr(chrono, "ChFramed"):
-        return chrono.ChFramed(position, Quat(1, 0, 0, 0))
-    if hasattr(chrono, "ChFrameD"):
-        return chrono.ChFrameD(position, Quat(1, 0, 0, 0))
-    raise RuntimeError("Could not create frame for motor initialization")
+# NO MOTOR JOINTS - Wheel is completely free with 6 DOF
+# Torques will be applied directly to the wheel body in step_physics()
 
-def set_motor_spindle_free(motor_link):
-    """Helper to set spindle constraint to FREE across Chrono versions."""
-    if hasattr(chrono, "ChLinkMotorRotation"):
-        try:
-            motor_link.SetSpindleConstraint(chrono.ChLinkMotorRotation.SpindleConstraint_FREE)
-        except:
-            try:
-                motor_link.SetSpindleConstraint(chrono.ChLinkMotorRotation.FREE)
-            except:
-                pass
-    elif hasattr(motor_link, "SetSpindleConstraint"):
-        try:
-            motor_link.SetSpindleConstraint(0)  # 0 typically means FREE
-        except:
-            pass
-
-# Create ENGINE motor (best practice: separate motors for engine and brake)
-# Engine motor connects wheel to ground and applies driving torque about Z-axis
-engine_motor = chrono.ChLinkMotorRotationTorque()
-engine_motor.Initialize(wheel, ground, create_motor_frame(wheel.GetPos()))
-set_motor_spindle_free(engine_motor)
-engine_motor.SetTorqueFunction(chrono.ChFunctionConst(0.0))
-system.Add(engine_motor)
-
-# Create BRAKE motor (applies torque opposing wheel rotation)
-# Using a separate motor ensures brake torque is independent and always opposes motion
-brake_motor = chrono.ChLinkMotorRotationTorque()
-brake_motor.Initialize(wheel, ground, create_motor_frame(wheel.GetPos()))
-set_motor_spindle_free(brake_motor)
-brake_motor.SetTorqueFunction(chrono.ChFunctionConst(0.0))
-system.Add(brake_motor)
+# Initialize accumulator for torque application
+# This MUST be done before calling AccumulateTorque to avoid segfaults
+if hasattr(wheel, 'AddAccumulator'):
+    TORQUE_ACCUMULATOR_IDX = wheel.AddAccumulator()
+    print(f"Torque accumulator initialized with index: {TORQUE_ACCUMULATOR_IDX}")
+else:
+    TORQUE_ACCUMULATOR_IDX = None
+    print(f"WARNING: AddAccumulator not available - torque application may fail")
 
 print(f"\n=== Initialization ===")
 print(f"WHEEL_RADIUS: {WHEEL_RADIUS:.3f} m")
@@ -217,8 +205,8 @@ print(f"Wheel initial center pos: Y={wheel.GetPos().y:.3f} m")
 print(f"Wheel bottom at start: Y={wheel.GetPos().y - WHEEL_RADIUS:.3f} m (near ground + envelope offset)")
 print(f"Initial offset from geometric contact: {initial_offset:.4f} m")
 print(f"Wheel mass: {wheel.GetMass():.3f} kg")
-print(f"Engine motor created: Using ChLinkMotorRotationTorque for driving torque")
-print(f"Brake motor created: Separate motor for brake torque (always opposes motion)")
+print(f"Wheel is FREE BODY with 6 DOF - no motor joints, no axle constraints")
+print(f"Torques applied directly in wheel's local coordinate frame")
 print(f"\nMaterial: Butyl rubber tire on dry bitumen")
 print(f"Friction coefficient: {MU_FRICTION:.2f} (Static: {MU_STATIC_FRICTION:.2f}, Kinetic: {MU_KINETIC_FRICTION:.2f})")
 print(f"Restitution coefficient: {REST_COEFF:.2f}")
@@ -373,14 +361,22 @@ def create_hexagon_geometry(radius, thickness=0.02):
     
     return node
 
-def create_ground_geometry(width, depth, thickness):
-    """Create a box geometry for the ground."""
-    format = GeomVertexFormat.getV3n3c4()
+def create_ground_geometry(width, depth, thickness, texture_repeat=10.0):
+    """Create a box geometry for the ground with UV coordinates for texturing.
+    
+    Args:
+        width: Width of the ground (X dimension)
+        depth: Depth of the ground (Y dimension)
+        thickness: Thickness of the ground (Z dimension)
+        texture_repeat: How many times to repeat the texture across the surface
+    """
+    format = GeomVertexFormat.getV3n3c4t2()  # Added t2 for UV coordinates
     vdata = GeomVertexData('ground', format, Geom.UHStatic)
     
     vertex = GeomVertexWriter(vdata, 'vertex')
     normal = GeomVertexWriter(vdata, 'normal')
     color = GeomVertexWriter(vdata, 'color')
+    texcoord = GeomVertexWriter(vdata, 'texcoord')
     
     hw = width / 2
     hd = depth / 2
@@ -390,6 +386,16 @@ def create_ground_geometry(width, depth, thickness):
     vertices = [
         (-hw, -hd, ht), (hw, -hd, ht), (hw, hd, ht), (-hw, hd, ht),  # Top
         (-hw, -hd, -ht), (hw, -hd, -ht), (hw, hd, -ht), (-hw, hd, -ht),  # Bottom
+    ]
+    
+    # UV coordinates for each face (scaled by texture_repeat)
+    uv_coords = [
+        [(0, 0), (texture_repeat, 0), (texture_repeat, texture_repeat), (0, texture_repeat)],  # Top
+        [(0, 0), (texture_repeat, 0), (texture_repeat, texture_repeat), (0, texture_repeat)],  # Bottom
+        [(0, 0), (texture_repeat, 0), (texture_repeat, 1), (0, 1)],  # Front
+        [(0, 0), (texture_repeat, 0), (texture_repeat, 1), (0, 1)],  # Back
+        [(0, 0), (texture_repeat, 0), (texture_repeat, 1), (0, 1)],  # Left
+        [(0, 0), (texture_repeat, 0), (texture_repeat, 1), (0, 1)],  # Right
     ]
     
     faces = [
@@ -404,14 +410,15 @@ def create_ground_geometry(width, depth, thickness):
     tris = GeomTriangles(Geom.UHStatic)
     vertex_count = 0
     
-    for face in faces:
+    for face_idx, face in enumerate(faces):
         v0, v1, v2, v3, nx, ny, nz = face
         
-        # Add 4 vertices for this face
-        for vi in [v0, v1, v2, v3]:
+        # Add 4 vertices for this face with UV coordinates
+        for i, vi in enumerate([v0, v1, v2, v3]):
             vertex.addData3(*vertices[vi])
             normal.addData3(nx, ny, nz)
             color.addData4(*GROUND_COLOR)
+            texcoord.addData2(*uv_coords[face_idx][i])
         
         # Add 2 triangles (CCW from outside)
         tris.addVertices(vertex_count, vertex_count + 1, vertex_count + 2)
@@ -468,12 +475,12 @@ class WheelSimulation(ShowBase):
         self.brake = 0.0
         self.engine_direction = 0.0  # 1.0 for forward, -1.0 for reverse, 0.0 for neutral
         self.paused = False
-        self.wheel_angle_z = 0.0  # Rotation angle for visualization
+        # No manual angle tracking - full quaternion orientation from Chrono
         
         # Camera control state
         self.camera_distance = 5.0  # Distance from wheel
         self.camera_heading = 180.0  # Horizontal angle (degrees)
-        self.camera_pitch = -30.0  # Vertical angle (degrees), negative looks down
+        self.camera_pitch = 30.0  # Vertical angle (degrees), negative looks down
         self.mouse_dragging = False
         self.last_mouse_x = 0
         self.last_mouse_y = 0
@@ -550,11 +557,30 @@ class WheelSimulation(ShowBase):
         # In Panda3D: Z is up, Y is forward (default)
         # We'll use Panda3D convention: Z up, and match Chrono by rotating
         
-        ground_geom = create_ground_geometry(40.0, 40.0, 0.5)
+        ground_geom = create_ground_geometry(40.0, 40.0, 0.5, texture_repeat=4.0)
         self.ground_node = self.render.attachNewNode(ground_geom)
         # Ground top should be at Z = 0 (matching Chrono Y = 0)
         self.ground_node.setPos(0, 0, -0.25)
         print(f"Ground created at Panda3D position: {self.ground_node.getPos()}")
+        
+        # Load and apply asphalt texture
+        try:
+            asphalt_tex = self.loader.loadTexture("asphalt.jpg")
+            if asphalt_tex:
+                # Set texture wrapping to repeat (tile the texture)
+                asphalt_tex.setWrapU(SamplerState.WM_repeat)
+                asphalt_tex.setWrapV(SamplerState.WM_repeat)
+                # Enable mipmapping for better quality at distance
+                asphalt_tex.setMinfilter(SamplerState.FT_linear_mipmap_linear)
+                asphalt_tex.setMagfilter(SamplerState.FT_linear)
+                # Apply texture to ground
+                self.ground_node.setTexture(asphalt_tex)
+                print(f"Asphalt texture loaded and applied successfully")
+            else:
+                print(f"WARNING: asphalt.jpg loaded but returned None")
+        except Exception as e:
+            print(f"WARNING: Could not load asphalt.jpg texture: {e}")
+            print(f"         Ground will use default color. Place asphalt.jpg in the working directory.")
         
         # Create wheel (cylinder) with two-level hierarchy
         # Parent node: holds position and base orientation
@@ -577,7 +603,7 @@ class WheelSimulation(ShowBase):
         # So cylinder Z axis should point along Panda Y
         # 
         # Roll -90 makes cylinder Z axis point along +Y (left-right)
-        self.wheel_geom_node.setHpr(0, 0, -90)  # Roll -90 to point Z along Y
+        self.wheel_geom_node.setHpr(0, -90, 0)  # Roll -90 to point Z along Y
         
         # Set initial position to match Chrono
         wp = wheel.GetPos()
@@ -691,8 +717,10 @@ class WheelSimulation(ShowBase):
         print(f"Simulation {'PAUSED' if self.paused else 'RESUMED'}")
     
     def reset_wheel(self):
-        """Reset wheel to initial position."""
+        """Reset wheel to initial position and orientation."""
         wheel.SetPos(Vec(-2.0, WHEEL_RADIUS + initial_offset, 0))
+        # Reset orientation to identity (no rotation)
+        wheel.SetRot(Quat(1, 0, 0, 0))
         if hasattr(wheel, "SetPos_dt"):
             wheel.SetPos_dt(Vec(0, 0, 0))
         if hasattr(wheel, "SetWvel"):
@@ -708,16 +736,22 @@ class WheelSimulation(ShowBase):
         self.throttle = 0.0
         self.brake = 0.0
         self.engine_direction = 0.0
-        self.wheel_angle_z = 0.0
-        print("Wheel reset to initial position")
+        
+        # Reset warning flags
+        if hasattr(self, '_overspeed_warning_logged'):
+            delattr(self, '_overspeed_warning_logged')
+        if hasattr(self, '_nan_warning_logged'):
+            delattr(self, '_nan_warning_logged')
+            
+        print("Wheel reset to initial position and orientation")
     
     def set_forward(self):
         self.throttle = 0.2
-        self.engine_direction = -1.0
+        self.engine_direction = 1.0
     
     def set_reverse(self):
         self.throttle = 0.2
-        self.engine_direction = 1.0
+        self.engine_direction = -1.0
     
     def release_throttle(self):
         self.throttle = 0.0
@@ -792,56 +826,234 @@ class WheelSimulation(ShowBase):
     
     def step_physics(self, dt):
         """
-        Step the physics simulation using proper Chrono motor torque application.
+        Step the physics simulation with 6 DOF free wheel.
         
-        BEST PRACTICE: Uses separate ChLinkMotorRotationTorque instances for engine and brake.
-        This is the idiomatic Project Chrono approach because:
+        The wheel is a completely free rigid body - no motor joints or axle constraints.
+        Torques are applied directly to the wheel body in its LOCAL coordinate frame:
         
-        1. Torques are integrated through the constraint solver (physics-accurate)
-        2. Works seamlessly with contacts, friction, and other forces
-        3. Maintains energy conservation and stability
-        4. No manual integration or velocity manipulation needed
-        5. Independent control of engine and brake ensures correct behavior
+        1. Get wheel's current orientation (quaternion)
+        2. Calculate local Z-axis direction in world coordinates (rolling axis)
+        3. Apply engine and brake torques as 3D vectors along this axis
+        4. Chrono integrates all forces (torques, gravity, contacts, friction)
         
-        Engine motor: Applies driving torque in the configured direction
-        Brake motor: Always applies torque opposing the wheel's angular velocity
+        This allows the wheel to tip, tumble, slide, and move freely in all 6 DOF.
         """
-        omegaZ = get_omega_z(wheel)  # Angular velocity about Z axis
+        # Get wheel's current orientation
+        try:
+            rot = wheel.GetRot()  # ChQuaternion
+        except Exception as e:
+            print(f"ERROR getting rotation: {e}")
+            rot = None
+        
+        # Get wheel's angular velocity in its local frame
+        try:
+            if hasattr(wheel, "GetAngVelLocal"):
+                omega_local = wheel.GetAngVelLocal()
+                omegaZ_local = omega_local.z  # Angular velocity about local Z (rolling axis)
+            elif hasattr(wheel, "GetWvel_loc"):
+                omega_local = wheel.GetWvel_loc()
+                omegaZ_local = omega_local.z
+            else:
+                # Fallback: use world Z component
+                omegaZ_local = get_omega_z(wheel)
+        except Exception as e:
+            print(f"ERROR getting angular velocity: {e}")
+            omegaZ_local = 0.0
 
-        # Calculate ENGINE torque (affected by engine_direction)
-        engine_torque = MAX_ENGINE_TORQUE * max(0.0, min(1.0, self.throttle))
-        engine_torque_signed = self.engine_direction * engine_torque
+        # Calculate ENGINE torque magnitude (affected by engine_direction)
+        engine_torque_mag = MAX_ENGINE_TORQUE * max(0.0, min(1.0, self.throttle))
+        engine_torque_signed = -self.engine_direction * engine_torque_mag
         
-        # Calculate BRAKE torque (always opposes motion, independent of engine_direction)
-        # Brake torque magnitude is proportional to brake input
-        brake_torque_magnitude = MAX_BRAKE_TORQUE * max(0.0, min(1.0, self.brake))
+        # Calculate BRAKE torque magnitude (always opposes local Z rotation)
+        brake_torque_mag = MAX_BRAKE_TORQUE * max(0.0, min(1.0, self.brake))
         
-        # Brake always opposes the current angular velocity
-        if abs(omegaZ) > 0.01:  # Only apply brake if wheel is spinning
-            # Brake torque opposes motion: if ω > 0, brake is negative; if ω < 0, brake is positive
-            brake_torque_signed = -brake_torque_magnitude * (1.0 if omegaZ > 0 else -1.0)
+        # Brake always opposes the wheel's spin about its rolling axis
+        if abs(omegaZ_local) > 0.01:
+            brake_torque_signed = -brake_torque_mag * (1.0 if omegaZ_local > 0 else -1.0)
         else:
-            # Wheel is essentially stopped, apply no brake torque
             brake_torque_signed = 0.0
         
-        # Apply engine torque through engine motor (best practice)
-        engine_torque_func = chrono.ChFunctionConst(engine_torque_signed)
-        engine_motor.SetTorqueFunction(engine_torque_func)
+        # Add damping torque (opposes rotation, simulates air resistance and bearing friction)
+        damping_torque = -ANGULAR_DAMPING * omegaZ_local
         
-        # Apply brake torque through brake motor (independent control)
-        brake_torque_func = chrono.ChFunctionConst(brake_torque_signed)
-        brake_motor.SetTorqueFunction(brake_torque_func)
+        # Total torque magnitude about local Z-axis
+        total_torque_mag = engine_torque_signed + brake_torque_signed + damping_torque
         
-        # Let Chrono's solver properly integrate all forces and torques
+        # Safety check: limit maximum angular velocity to prevent instability
+        MAX_ANGULAR_VEL = 100.0  # rad/s (~955 RPM)
+        if abs(omegaZ_local) > MAX_ANGULAR_VEL:
+            if not hasattr(self, '_overspeed_warning_logged'):
+                self._overspeed_warning_logged = True
+                print(f"\n⚠️  WARNING: Wheel overspeed detected ({omegaZ_local:.1f} rad/s)")
+                print(f"   Clamping to {MAX_ANGULAR_VEL} rad/s to prevent instability\n")
+            # Apply strong counter-torque to slow down
+            total_torque_mag = -10.0 * omegaZ_local
+        
+        # Convert local Z-axis to world coordinates
+        # The wheel's rolling axis is local Z (0, 0, 1)
+        local_z = Vec(0, 0, 1)
+        
+        # Rotate local axis to world coordinates using quaternion
+        world_rolling_axis = Vec(0, 0, 1)  # Default: world Z
+        
+        if rot is not None:
+            try:
+                if hasattr(rot, 'Rotate'):
+                    world_rolling_axis = rot.Rotate(local_z)
+                elif hasattr(rot, 'RotateVector'):
+                    world_rolling_axis = rot.RotateVector(local_z)
+                elif hasattr(rot, 'GetZaxis'):
+                    # Some Chrono versions have direct axis getters
+                    world_rolling_axis = rot.GetZaxis()
+            except Exception as e:
+                if not hasattr(self, '_rotation_error_logged'):
+                    self._rotation_error_logged = True
+                    print(f"WARNING: Could not rotate axis with quaternion: {e}")
+                    print(f"Using fallback: world Z-axis (wheel may not behave correctly if tipped)")
+                # Keep default world Z
+        
+        # Create 3D torque vector in world coordinates
+        torque_vector = Vec(
+            world_rolling_axis.x * total_torque_mag,
+            world_rolling_axis.y * total_torque_mag,
+            world_rolling_axis.z * total_torque_mag
+        )
+        
+        # Apply torque directly to wheel body (with version compatibility)
+        # Try different API methods for clearing accumulators
+        if not hasattr(self, '_logged_chrono_api'):
+            self._logged_chrono_api = True
+            self._clear_method_used = None
+            self._torque_method_used = None
+            print(f"\n=== Chrono API Detection ===")
+            
+            # Check clear methods
+            if hasattr(wheel, 'Empty_forces_accumulators'):
+                print(f"✓ Clear method available: Empty_forces_accumulators()")
+                self._clear_method_used = "Empty_forces_accumulators()"
+            elif hasattr(wheel, 'EmptyAccumulators'):
+                print(f"✓ Clear method available: EmptyAccumulators()")
+                self._clear_method_used = "EmptyAccumulators()"
+            elif hasattr(wheel, 'Empty_forces_accumulator'):
+                print(f"✓ Clear method available: Empty_forces_accumulator()")
+                self._clear_method_used = "Empty_forces_accumulator()"
+            else:
+                print(f"✗ No clear method found (auto-reset per step)")
+                self._clear_method_used = "None (auto-reset per step)"
+            
+            # Check torque methods - will test actual signature during first call
+            torque_methods = []
+            if hasattr(wheel, 'Accumulate_torque'):
+                torque_methods.append('Accumulate_torque()')
+            if hasattr(wheel, 'AccumulateTorque'):
+                torque_methods.append('AccumulateTorque()')
+            if hasattr(wheel, 'AddTorque'):
+                torque_methods.append('AddTorque()')
+            if hasattr(wheel, 'SetAppliedTorque'):
+                torque_methods.append('SetAppliedTorque()')
+            
+            if torque_methods:
+                print(f"✓ Available torque methods: {', '.join(torque_methods)}")
+                print(f"  (Testing signatures to find compatible one...)")
+            else:
+                print(f"✗ ERROR: No torque application method found!")
+            print(f"===========================\n")
+        
+        # Clear accumulators
+        if hasattr(wheel, 'Empty_forces_accumulators'):
+            wheel.Empty_forces_accumulators()
+        elif hasattr(wheel, 'EmptyAccumulators'):
+            wheel.EmptyAccumulators()
+        elif hasattr(wheel, 'Empty_forces_accumulator'):
+            wheel.Empty_forces_accumulator()
+        # If no clear method exists, it's okay - Chrono will reset per-step automatically
+        
+        # Apply torque using compatible method names
+        torque_applied = False
+        method_signature = None
+        
+        if hasattr(wheel, 'Accumulate_torque'):
+            try:
+                wheel.Accumulate_torque(torque_vector, False)  # False = absolute (world) coordinates
+                torque_applied = True
+                method_signature = "Accumulate_torque(torque_vector, False)"
+            except TypeError:
+                pass
+        
+        if not torque_applied and hasattr(wheel, 'AccumulateTorque') and TORQUE_ACCUMULATOR_IDX is not None:
+            # Signature: AccumulateTorque(idx, torque, local)
+            # idx = accumulator index (from AddAccumulator())
+            # torque = 3D torque vector
+            # local = False for world coordinates, True for local coordinates
+            try:
+                wheel.AccumulateTorque(TORQUE_ACCUMULATOR_IDX, torque_vector, False)
+                torque_applied = True
+                method_signature = f"AccumulateTorque({TORQUE_ACCUMULATOR_IDX}, torque_vector, False)"
+            except (TypeError, AttributeError, RuntimeError) as e:
+                if not hasattr(self, '_tried_signatures'):
+                    self._tried_signatures = []
+                self._tried_signatures.append((f"AccumulateTorque({TORQUE_ACCUMULATOR_IDX}, torque_vector, False)", str(e)))
+            except Exception as e:
+                print(f"UNEXPECTED ERROR in AccumulateTorque: {type(e).__name__}: {e}")
+                if not hasattr(self, '_tried_signatures'):
+                    self._tried_signatures = []
+                self._tried_signatures.append((f"AccumulateTorque({TORQUE_ACCUMULATOR_IDX}, torque_vector, False)", f"FATAL: {e}"))
+        
+        if not torque_applied and hasattr(wheel, 'AddTorque'):
+            try:
+                wheel.AddTorque(torque_vector)
+                torque_applied = True
+                method_signature = "AddTorque(torque_vector)"
+            except TypeError:
+                pass
+        
+        if not torque_applied:
+            # Fallback: Set torque directly if accumulation not available
+            if hasattr(wheel, 'SetAppliedTorque'):
+                wheel.SetAppliedTorque(torque_vector)
+                torque_applied = True
+                method_signature = "SetAppliedTorque(torque_vector)"
+        
+        # Log which method worked (only once)
+        if torque_applied and not hasattr(self, '_torque_method_used'):
+            self._torque_method_used = method_signature
+            print(f"\n✅ Successfully using torque method: {method_signature}")
+            print(f"\n" + "="*60)
+            print(f"UPDATE FILE HEADER WITH DETECTED API:")
+            print(f"  - Clear forces method: {self._clear_method_used}")
+            print(f"  - Apply torque method: {method_signature}")
+            print(f"="*60 + "\n")
+        
+        if not torque_applied and not hasattr(self, '_logged_torque_error'):
+            self._logged_torque_error = True
+            print(f"\n❌ ERROR: Could not apply torque - no compatible method found!")
+            
+            # Print detailed error information
+            if hasattr(self, '_tried_signatures') and self._tried_signatures:
+                print(f"\nAttempted signatures and their errors:")
+                for sig_name, error_msg in self._tried_signatures:
+                    print(f"  ✗ {sig_name}")
+                    print(f"    Error: {error_msg}")
+            
+            # Try to inspect the actual method signature
+            if hasattr(wheel, 'AccumulateTorque'):
+                import inspect
+                try:
+                    sig = inspect.signature(wheel.AccumulateTorque)
+                    print(f"\n📋 Actual AccumulateTorque signature: {sig}")
+                except Exception as e:
+                    print(f"\n⚠️ Could not inspect signature: {e}")
+            
+            print(f"\n💡 Suggestion: Check Chrono documentation for ChBody torque application methods")
+            print(f"   Or try using a motor joint approach instead of direct torque application.\n")
+        
+        # Let Chrono's solver integrate all forces and torques
         system.DoStepDynamics(dt)
-
-        # Update for visualization (rotation about Z axis)
-        omegaZ = get_omega_z(wheel)
-        self.wheel_angle_z += omegaZ * dt
         
         # Log wheel position every 0.1 seconds
         if int(system.GetChTime() * 10) != int((system.GetChTime() - dt) * 10):
             wp = wheel.GetPos()
+            wr = wheel.GetRot()
             
             # Check for contacts (only during first 2 seconds to avoid spam)
             contact_info = ""
@@ -856,11 +1068,16 @@ class WheelSimulation(ShowBase):
                     if system.GetChTime() < 0.2:  # Only print error once
                         print(f"[WARNING] Could not get contact count: {e}")
             
-            total_torque = engine_torque_signed + brake_torque_signed
+            # Get quaternion components for logging
+            if hasattr(wr, 'e0'):
+                qw, qx, qy, qz = wr.e0, wr.e1, wr.e2, wr.e3
+            else:
+                qw, qx, qy, qz = 1, 0, 0, 0
+            
             print(f"Time: {system.GetChTime():.2f}s | Pos: X={wp.x:.3f} Y={wp.y:.3f} Z={wp.z:.3f} | "
-                  f"Throttle: {self.throttle:.2f} Brake: {self.brake:.2f} | ωZ: {omegaZ:.2f} rad/s | "
-                  f"Engine: {engine_torque_signed:.1f} Nm | Brake: {brake_torque_signed:.1f} Nm | "
-                  f"Total: {total_torque:.1f} Nm{contact_info}")
+                  f"Rot: [{qw:.2f}, {qx:.2f}, {qy:.2f}, {qz:.2f}] | "
+                  f"Throttle: {self.throttle:.2f} Brake: {self.brake:.2f} | ωZ: {omegaZ_local:.2f} rad/s | "
+                  f"Torque: {total_torque_mag:.1f} Nm (Damp: {damping_torque:.1f}){contact_info}")
     
     def update_task(self, task):
         """Main update loop called every frame."""
@@ -888,11 +1105,44 @@ class WheelSimulation(ShowBase):
         
         self.wheel_node.setPos(panda_x, panda_y, panda_z)
         
-        # Rotate wheel around Y axis (green line) - the horizontal wheel axis
-        # The geom node has fixed roll -90, so cylinder axis is along Y
-        # Now rotate the PARENT node around Y axis using Pitch
-        wheel_rotation_deg = self.wheel_angle_z * 180 / math.pi
-        self.wheel_node.setP(wheel_rotation_deg)  # Pitch around Y axis
+        # Get FULL orientation from Chrono (all 6 DOF)
+        # Extract quaternion from Chrono wheel body
+        chrono_quat = wheel.GetRot()  # ChQuaternion
+        
+        # Extract quaternion components (handle different Chrono versions)
+        if hasattr(chrono_quat, 'e0'):
+            qw, qx, qy, qz = chrono_quat.e0, chrono_quat.e1, chrono_quat.e2, chrono_quat.e3
+        elif hasattr(chrono_quat, 'w'):
+            qw, qx, qy, qz = chrono_quat.w, chrono_quat.x, chrono_quat.y, chrono_quat.z
+        else:
+            qw, qx, qy, qz = chrono_quat[0], chrono_quat[1], chrono_quat[2], chrono_quat[3]
+        
+        # Safety check: detect NaN or invalid quaternions
+        import math
+        if math.isnan(qw) or math.isnan(qx) or math.isnan(qy) or math.isnan(qz):
+            if not hasattr(self, '_nan_warning_logged'):
+                self._nan_warning_logged = True
+                print(f"\n❌ CRITICAL: NaN detected in quaternion!")
+                print(f"   Quaternion: [{qw}, {qx}, {qy}, {qz}]")
+                print(f"   Simulation has become numerically unstable. Press 'R' to reset.\n")
+            # Use identity quaternion to prevent crash
+            qw, qx, qy, qz = 1.0, 0.0, 0.0, 0.0
+        
+        # Convert quaternion to match Panda3D coordinate system
+        # Chrono (X, Y, Z) -> Panda3D (X, Z, Y) with Y and Z swapped
+        # For quaternion rotation conversion, swap the y and z components
+        panda_quat_w = -qw
+        panda_quat_x = qx   # X stays same
+        panda_quat_y = qz   # Chrono Z -> Panda Y
+        panda_quat_z = qy   # Chrono Y -> Panda Z
+        
+        # Apply quaternion to parent node (this handles all 3 rotation axes)
+        panda_quat = PandaQuat(panda_quat_w, panda_quat_x, panda_quat_y, panda_quat_z)
+        self.wheel_node.setQuat(panda_quat)
+        
+        # The geometry node still needs its fixed orientation
+        # This aligns the cylinder geometry with the physics shape
+        self.wheel_geom_node.setHpr(0, -90, 0)
         
         # Update camera based on mouse input
         self.update_camera_from_mouse()
