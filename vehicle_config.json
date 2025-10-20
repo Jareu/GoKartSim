@@ -32,14 +32,15 @@
       "wheel_radius": 0.1,
       "max_forward_speed": 30.0,
       "max_backward_speed": 0,
-      "max_drive_force": 600,
+      "max_drive_force": 1200,
       "max_brake_force": 10000,
       "cornering_stiffness": 8000.0,
       "longitudinal_stiffness": 12000.0,
       "slip_angle_peak": 0.1,
       "slip_ratio_peak": 0.12,
       "ellipse_bias_x": 1.0,
-      "ellipse_bias_y": 1.0
+      "ellipse_bias_y": 1.0,
+      "pneumatic_trail0": 0.06
     },
     "steering": {
       "lock_angle_degrees": 35.0,
@@ -48,6 +49,29 @@
     "brakes": {
       "front_bias": 0.2,
       "rear_bias": 0.8
+    },
+    "drive": {
+      "front_bias": 0.0,
+      "rear_bias": 1.0
+    },
+    "engine": {
+      "enabled": true,
+      "J_e": 0.08,
+      "tau_throttle": 0.1,
+      "dT_dt_limit": 400.0,
+      "T_loss_visc": 0.02,
+      "T_loss_coulomb": 0.8,
+      "rpm_idle": 1200,
+      "rpm_redline": 6500,
+      "torque_curve_rpm": [
+        [1500, 10],
+        [3000, 16],
+        [4500, 18],
+        [6000, 15]
+      ],
+      "gear_ratio": 11.0,
+      "drivetrain_eta": 0.95,
+      "wheel_radius": 0.135
     },
     "friction": {
       "angular_damping_factor": 0.1,

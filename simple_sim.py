@@ -38,6 +38,88 @@ class TireForces:
     Fy: float          # lateral tire force (tire-left +)
 
 
+# ============================================================================
+# Engine Model (Simple IC Engine with Fixed Gear Ratio)
+# ============================================================================
+
+@dataclass
+class EngineCfg:
+    """Engine configuration parameters."""
+    J_e: float                 # engine+flywheel inertia [kg·m²]
+    tau_throttle: float        # throttle/manifold time constant [s]
+    dT_dt_limit: float         # max torque slew [N·m/s]
+    T_loss_visc: float         # viscous loss coefficient a [N·m·s/rad]
+    T_loss_coulomb: float      # coulomb loss b [N·m]
+    rpm_idle: float            # idle rpm
+    rpm_redline: float         # redline rpm
+    torque_curve_rpm: list     # (rpm, torque_Nm) pairs at WOT
+
+
+class SimpleEngine:
+    """12 hp internal combustion engine with fixed gear ratio drivetrain."""
+    
+    def __init__(self, cfg: EngineCfg):
+        self.cfg = cfg
+        self.u_eff = 0.0           # effective throttle / air-charge [0..1]
+        self.T_e = 0.0             # delivered engine torque [N·m]
+        self.omega_e = cfg.rpm_idle * 2 * math.pi / 60.0  # rad/s
+
+    def _T_wot(self, rpm: float) -> float:
+        """Piecewise-linear lookup on torque_curve_rpm."""
+        pts = self.cfg.torque_curve_rpm
+        if rpm <= pts[0][0]:
+            return pts[0][1]
+        for i in range(len(pts) - 1):
+            r0, t0 = pts[i]
+            r1, t1 = pts[i + 1]
+            if rpm <= r1:
+                k = (rpm - r0) / max(1e-6, (r1 - r0))
+                return t0 + k * (t1 - t0)
+        return pts[-1][1]
+
+    def step(self, dt: float, throttle_cmd: float,
+             axle_torque: float, G: float, eta: float):
+        """
+        Advance engine one timestep.
+        
+        throttle_cmd: 0..1 driver command
+        axle_torque: opposing torque at axle (Fx * r_w), sign-aware
+        G: fixed gear ratio engine:axle (>1)
+        eta: drivetrain efficiency 0..1
+        """
+        
+        # 1) Throttle/manifold lag (first-order)
+        du = (throttle_cmd - self.u_eff) / max(1e-4, self.cfg.tau_throttle)
+        self.u_eff += dt * du
+        self.u_eff = clamp(self.u_eff, 0.0, 1.0)
+
+        # 2) WOT torque at current rpm
+        rpm = max(600.0, min(self.cfg.rpm_redline, 
+                             self.omega_e * 60.0 / (2 * math.pi)))
+        T_wot = self._T_wot(rpm)
+
+        # 3) Demanded torque from air charge
+        T_cmd = self.u_eff * T_wot
+
+        # 4) Internal losses
+        T_loss = self.cfg.T_loss_visc * self.omega_e + self.cfg.T_loss_coulomb
+
+        # 5) Torque slew limit
+        dT = T_cmd - self.T_e
+        max_step = self.cfg.dT_dt_limit * dt if self.cfg.dT_dt_limit > 0 else abs(dT)
+        self.T_e += clamp(dT, -max_step, max_step)
+        self.T_e = max(0.0, self.T_e - T_loss)
+
+        # 6) Engine dynamics with load reflected through fixed ratio
+        T_load = max(0.0, axle_torque) / max(1e-6, G * max(1e-3, eta))
+        domega = (self.T_e - T_load) / max(1e-6, self.cfg.J_e)
+        omega_min = 2 * math.pi * self.cfg.rpm_idle / 60.0
+        omega_max = 2 * math.pi * self.cfg.rpm_redline / 60.0
+        self.omega_e = clamp(self.omega_e + dt * domega, omega_min, omega_max)
+
+        return self.T_e  # crank torque available to driveline
+
+
 def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
 
