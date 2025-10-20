@@ -34,13 +34,15 @@
       "max_backward_speed": 0,
       "max_drive_force": 1200,
       "max_brake_force": 10000,
-      "cornering_stiffness": 8000.0,
-      "longitudinal_stiffness": 12000.0,
+      "cornering_stiffness": 7500.0,
+      "longitudinal_stiffness": 9500.0,
       "slip_angle_peak": 0.1,
       "slip_ratio_peak": 0.12,
       "ellipse_bias_x": 1.0,
       "ellipse_bias_y": 1.0,
-      "pneumatic_trail0": 0.06
+      "pneumatic_trail0": 0.06,
+      "pneumatic_trail_front": 0.06,
+      "pneumatic_trail_rear": 0.02
     },
     "steering": {
       "lock_angle_degrees": 35.0,

@@ -351,7 +351,8 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
                         throttle_frac: float = 0.0,
                         raw_driver_Fx_request: float = 0.0,
                         slip_angle_peak: float = 0.10,
-                        pneumatic_trail0: float = 0.06):
+                        pneumatic_trail0: float = 0.06,
+                        Fx_engine_cap: float|None = None):
     """
     Returns (Fx, Fy, Mz) in the TIRE FRAME (apply in world via basis vectors).
     Ca: cornering stiffness [N/rad]
@@ -361,6 +362,7 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
     raw_driver_Fx_request: original driver request before brake distribution (for saturation)
     slip_angle_peak: slip angle at peak lateral force [rad]
     pneumatic_trail0: pneumatic trail distance [m] for aligning torque
+    Fx_engine_cap: maximum drive force from engine power limit [N] (None = no limit)
     """
     # 1) Kinematics -> tire state
     st = compute_tire_state(tire_vel_world, tire_fwd_world, tire_right_world,
@@ -384,8 +386,9 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
             kappa_target = -brake_frac * kappa_peak
         else:  # Acceleration
             # (Fix 2A) Add throttle headroom to avoid constant saturation
-            # At full throttle, request ~60% of peak slip to leave lateral budget
-            throttle_headroom = 0.6
+            # At full throttle, request ~50% of peak slip to leave lateral budget
+            # Engine power cap now handles most of the realism
+            throttle_headroom = 0.5
             kappa_target = throttle_frac * kappa_peak * throttle_headroom
         
         Fx_req = pure_longitudinal(kappa_target, muN, Cx=Cx)
@@ -406,6 +409,11 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
         sat_request_fx = raw_driver_Fx_request if raw_driver_Fx_request != 0.0 else driver_Fx_request
     else:                            # acceleration
         sat_request_fx = driver_Fx_request
+    
+    # Extra guard: if accelerating but this tire has no throttle (front tires), zero the saturation signal
+    if driver_Fx_request > 0.0 and throttle_frac <= 0.0:
+        sat_request_fx = 0.0
+    
     pre_sat = ellipse_saturation(sat_request_fx, Fy_pure, muN, ellip_x, ellip_y)
     
     # (Patch 3) Gentle throttle-understeer bias: favor longitudinal when driving
@@ -415,6 +423,10 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
         # Gentle longitudinal bias when driving (5% instead of 10%)
         ellip_x_eff = ellip_x * (1.0 + 0.05 * throttle_frac)   # +5% at full throttle
         ellip_y_eff = ellip_y * (1.0 - 0.025 * throttle_frac)  # -2.5% at full throttle
+    
+    # Engine cap: limit acceleration force by available power
+    if Fx_engine_cap is not None and throttle_frac > brake_frac and Fx_req > 0.0:
+        Fx_req = min(Fx_req, Fx_engine_cap)
     
     # 4) Combined-slip saturation via ellipse
     forces = combine_forces(Fx_req, Fy_pure, muN, ellip_x=ellip_x_eff, ellip_y=ellip_y_eff)
@@ -514,6 +526,8 @@ class TDTire(object):
                  ellipse_bias_x=1.0,
                  ellipse_bias_y=1.0,
                  pneumatic_trail0=0.06,
+                 pneumatic_trail_front=None,
+                 pneumatic_trail_rear=None,
                  dimensions=(0.12, 0.20), 
                  tire_mass=3.0,
                  default_traction=1.0,
@@ -535,7 +549,10 @@ class TDTire(object):
         self.longitudinal_stiffness = longitudinal_stiffness  # Cx [N]
         self.slip_angle_peak = slip_angle_peak  # rad
         self.slip_ratio_peak = slip_ratio_peak
-        self.pneumatic_trail0 = pneumatic_trail0  # Self-aligning moment parameter
+        # Self-aligning moment: use per-tire trail if provided, otherwise use default
+        self.pneumatic_trail0 = pneumatic_trail0
+        self.pneumatic_trail_front = pneumatic_trail_front if pneumatic_trail_front is not None else 0.06
+        self.pneumatic_trail_rear = pneumatic_trail_rear if pneumatic_trail_rear is not None else 0.02
         
         # Ellipse bias for combined-slip limiting
         self.ellipse_bias_x = ellipse_bias_x  # >1 favors longitudinal, <1 favors lateral
@@ -622,9 +639,11 @@ class TDTire(object):
             ellip_y=self.ellipse_bias_y,
             brake_frac=self.brake_frac,
             throttle_frac=self.throttle_frac,
-            raw_driver_Fx_request=self.raw_driver_Fx_request, # Pass raw request
+            raw_driver_Fx_request=self.raw_driver_Fx_request,
             slip_angle_peak=self.slip_angle_peak,
-            pneumatic_trail0=self.pneumatic_trail0 # Assuming a default for pneumatic_trail0
+            pneumatic_trail0=self.pneumatic_trail0,
+            # Engine cap for acceleration (rear tires only)
+            Fx_engine_cap=(getattr(self.car, 'Fx_engine_cap_per_wheel', None) if self in self.car.tires[:2] else None)
         )
         
         # Store state for skid marks
@@ -647,27 +666,6 @@ class TDTire(object):
         # Light smoothing to avoid jitter
         self.skid_intensity = 0.85 * self.skid_intensity + 0.15 * combined_sig
         self.is_skidding = self.skid_intensity > 0.1
-        
-        # Enforce max_forward_speed: limit longitudinal velocity
-        vel = self.body.linearVelocity
-        fwd = self.body.GetWorldVector((0, 1))
-        v_long = vel.x * fwd.x + vel.y * fwd.y
-        if v_long > self.max_forward_speed:
-            # Clamp to max speed by adjusting velocity
-            excess = v_long - self.max_forward_speed
-            vel_damping_x = -excess * fwd.x
-            vel_damping_y = -excess * fwd.y
-            self.body.linearVelocity = b2Vec2(vel.x + vel_damping_x, vel.y + vel_damping_y)
-        
-        # Prevent reverse velocity (no reverse gear)
-        if v_long < 0:
-            # Remove backward velocity component
-            vel = self.body.linearVelocity
-            v_long = vel.x * fwd.x + vel.y * fwd.y
-            if v_long < 0:
-                vel_damping_x = -v_long * fwd.x
-                vel_damping_y = -v_long * fwd.y
-                self.body.linearVelocity = b2Vec2(vel.x + vel_damping_x, vel.y + vel_damping_y)
         
         # Convert forces to world frame and apply
         F_world = tire_forces_to_world(forces, fwd_world, right_world)
@@ -725,6 +723,7 @@ class TDCar(object):
                  lock_angle_degrees=35.0, turn_speed_degrees_per_sec=180.0,
                  default_traction=1.0,
                  drive_config=None,
+                 engine_cfg=None, gear_ratio=11.0, driveline_eta=0.95,
                  **tire_kws):
         if vertices is None:
             vertices = TDCar.vertices
@@ -750,8 +749,27 @@ class TDCar(object):
         # Drive configuration for throttle distribution
         self.drive_config = drive_config or {'front_bias': 0.0, 'rear_bias': 1.0}
         
+        # Engine configuration
+        self.engine = SimpleEngine(engine_cfg) if engine_cfg else None
+        self.gear_ratio = gear_ratio
+        self.driveline_eta = driveline_eta
+        self.Fx_engine_cap_per_wheel = float('inf')  # No cap initially
+        
         # Create tires with default_traction passed through
-        self.tires = [TDTire(self, default_traction=default_traction, **tire_kws) for i in range(4)]
+        wheel_radius = tire_kws.get('wheel_radius', 0.10)
+        self.wheel_radius = wheel_radius
+        
+        # Create tires with per-tire pneumatic trail (fronts/rears differ for better turn-in)
+        self.tires = []
+        front_trail = tire_kws.get('pneumatic_trail_front', 0.06)
+        rear_trail = tire_kws.get('pneumatic_trail_rear', 0.02)
+        
+        for i in range(4):
+            tire_kwargs = tire_kws.copy()
+            # Tire indices: 0=RL, 1=RR, 2=FL, 3=FR
+            # Rear tires (0,1) get rear_trail, front tires (2,3) get front_trail
+            tire_kwargs['pneumatic_trail0'] = rear_trail if i < 2 else front_trail
+            self.tires.append(TDTire(self, default_traction=default_traction, **tire_kwargs))
 
         if tire_anchors is None:
             anchors = TDCar.tire_anchors
@@ -867,6 +885,56 @@ class TDCar(object):
                     else:
                         # Preserve 0..1 feel per axle by scaling throttle fraction
                         tire.throttle_frac = min(1.0, old_throttle_frac * scale * 2.0)
+
+        # Step engine and compute available drive force cap
+        if self.engine is not None:
+            # Calculate axle speed from chassis forward velocity
+            fwd = self.body.GetWorldVector((0, 1))
+            v = self.body.linearVelocity
+            v_long_car = v.x * fwd.x + v.y * fwd.y
+            omega_axle = v_long_car / max(EPS, self.wheel_radius)
+            
+            # Sum opposing axle torque from driven wheels (rear-only)
+            axle_torque_load = 0.0
+            for i, tire in enumerate([self.tires[0], self.tires[1]]):  # RL, RR
+                if tire.driver_Fx_request > 0.0:
+                    axle_torque_load += tire.driver_Fx_request * self.wheel_radius
+            
+            # Driver throttle from rear tires (same for both)
+            throttle_cmd = max((self.tires[0].throttle_frac, self.tires[1].throttle_frac)) if any(t.throttle_frac > 0 for t in self.tires[:2]) else 0.0
+            
+            # Step engine
+            _ = self.engine.step(
+                dt=time_step,
+                throttle_cmd=throttle_cmd,
+                axle_torque=axle_torque_load,
+                G=self.gear_ratio,
+                eta=self.driveline_eta
+            )
+            
+            # Calculate available drive force cap from engine torque
+            T_axle_avail = self.engine.T_e * self.gear_ratio * self.driveline_eta
+            num_driven = 2  # rear-drive only
+            self.Fx_engine_cap_per_wheel = max(0.0, T_axle_avail / max(EPS, num_driven * self.wheel_radius))
+        else:
+            self.Fx_engine_cap_per_wheel = float('inf')  # No cap if no engine
+
+        # Clamp chassis velocity (do it once on body, not per-tire, to avoid joint impulses)
+        fwd = self.body.GetWorldVector((0, 1))
+        v = self.body.linearVelocity
+        v_long_car = v.x * fwd.x + v.y * fwd.y
+        
+        # Max forward speed
+        max_v = max(t.max_forward_speed for t in self.tires)
+        if v_long_car > max_v:
+            # Trim forward component smoothly
+            excess = v_long_car - max_v
+            self.body.linearVelocity -= excess * fwd
+        
+        # No reverse creep (prevent backward motion)
+        if v_long_car < 0:
+            # Remove backward component entirely
+            self.body.linearVelocity -= v_long_car * fwd
 
         # Apply tire forces with weight transfer
         # Order: RL=0, RR=1, FL=2, FR=3
@@ -987,6 +1055,24 @@ def main():
     drive_config = vehicle_config.get('drive', {'front_bias': 0.0, 'rear_bias': 1.0})
     surface_config = config['surfaces']
     
+    # Load engine configuration if enabled
+    engine_cfg = None
+    gear_ratio = drive_config.get('gear_ratio', 11.0)
+    driveline_eta = drive_config.get('drivetrain_eta', 0.95)
+    
+    engine_params = vehicle_config.get('engine', {})
+    if engine_params.get('enabled', False):
+        engine_cfg = EngineCfg(
+            J_e=engine_params.get('J_e', 0.08),
+            tau_throttle=engine_params.get('tau_throttle', 0.1),
+            dT_dt_limit=engine_params.get('dT_dt_limit', 400.0),
+            T_loss_visc=engine_params.get('T_loss_visc', 0.02),
+            T_loss_coulomb=engine_params.get('T_loss_coulomb', 0.8),
+            rpm_idle=engine_params.get('rpm_idle', 1200.0),
+            rpm_redline=engine_params.get('rpm_redline', 6500.0),
+            torque_curve_rpm=engine_params.get('torque_curve_rpm', [(1500, 10), (3000, 16), (4500, 18), (6000, 15)])
+        )
+    
     # Create the car with config parameters
     car = TDCar(
         world,
@@ -999,6 +1085,9 @@ def main():
         turn_speed_degrees_per_sec=steering_config['turn_speed_degrees_per_sec'],
         default_traction=surface_config.get('default_traction', 1.0),
         drive_config=drive_config,
+        engine_cfg=engine_cfg,
+        gear_ratio=gear_ratio,
+        driveline_eta=driveline_eta,
         # Tire parameters
         wheel_radius=tire_config.get('wheel_radius', 0.10),
         dimensions=tuple(tire_config['dimensions']),
@@ -1013,7 +1102,9 @@ def main():
         slip_ratio_peak=tire_config.get('slip_ratio_peak', 0.12),
         ellipse_bias_x=tire_config.get('ellipse_bias_x', 1.0),
         ellipse_bias_y=tire_config.get('ellipse_bias_y', 1.0),
-        pneumatic_trail0=tire_config.get('pneumatic_trail0', 0.06)
+        pneumatic_trail0=tire_config.get('pneumatic_trail0', 0.06),
+        pneumatic_trail_front=tire_config.get('pneumatic_trail_front', 0.06),
+        pneumatic_trail_rear=tire_config.get('pneumatic_trail_rear', 0.02)
     )
     
     # Create ground areas with different traction from config
