@@ -40,11 +40,13 @@ class TDTire(object):
                  turn_torque=15, max_lateral_impulse=3,
                  dimensions=(0.5, 1.25), tire_mass=1.25,
                  angular_damping_factor=0.1, drag_coefficient=-2,
+                 default_traction=1.0,
                  position=(0, 0)):
 
         world = car.body.world
 
-        self.current_traction = 1
+        self.default_traction = default_traction
+        self.current_traction = default_traction
         self.turn_torque = turn_torque
         self.max_forward_speed = max_forward_speed
         self.max_backward_speed = max_backward_speed
@@ -135,7 +137,8 @@ class TDTire(object):
         current_forward_normal = self.forward_velocity
         current_forward_speed = current_forward_normal.Normalize()
 
-        drag_force_magnitude = self.drag_coefficient * current_forward_speed
+        # Apply drag opposite to motion direction (drag_coefficient is positive)
+        drag_force_magnitude = -self.drag_coefficient * current_forward_speed
         self.body.ApplyForce(self.current_traction * drag_force_magnitude * current_forward_normal,
                              self.body.worldCenter, True)
 
@@ -196,15 +199,22 @@ class TDTire(object):
             self.update_traction()
 
     def update_traction(self):
+        """
+        Update traction based on ground areas.
+        - No special areas: use default_traction
+        - On special areas: default_traction × min(all modifiers)
+        - Overlapping areas: most slippery (minimum) wins
+        """
         if not self.ground_areas:
-            self.current_traction = 1
+            # Not on any special ground area - use default/baseline traction
+            self.current_traction = self.default_traction
         else:
-            self.current_traction = 0
+            # On one or more special ground areas
+            # Use minimum modifier (most slippery surface wins)
             mods = [ga.friction_modifier for ga in self.ground_areas]
-
-            max_mod = max(mods)
-            if max_mod > self.current_traction:
-                self.current_traction = max_mod
+            min_modifier = min(mods)
+            # Apply modifier to baseline traction
+            self.current_traction = self.default_traction * min_modifier
 
 
 class TDCar(object):
@@ -227,6 +237,7 @@ class TDCar(object):
     def __init__(self, world, vertices=None,
                  tire_anchors=None, body_mass=30.0, position=(0, 0),
                  lock_angle_degrees=40.0, turn_speed_degrees_per_sec=160.0,
+                 default_traction=1.0,
                  **tire_kws):
         if vertices is None:
             vertices = TDCar.vertices
@@ -248,7 +259,8 @@ class TDCar(object):
         self.lock_angle = math.radians(lock_angle_degrees)
         self.turn_speed_per_sec = math.radians(turn_speed_degrees_per_sec)
 
-        self.tires = [TDTire(self, **tire_kws) for i in range(4)]
+        # Create tires with default_traction passed through
+        self.tires = [TDTire(self, default_traction=default_traction, **tire_kws) for i in range(4)]
 
         if tire_anchors is None:
             anchors = TDCar.tire_anchors
@@ -390,6 +402,7 @@ def main():
     tire_config = vehicle_config['tires']
     friction_config = vehicle_config['friction']
     steering_config = vehicle_config['steering']
+    surface_config = config['surfaces']
     
     # Create the car with config parameters
     car = TDCar(
@@ -409,11 +422,11 @@ def main():
         turn_torque=tire_config['turn_torque'],
         max_lateral_impulse=tire_config['max_lateral_impulse'],
         angular_damping_factor=friction_config['angular_damping_factor'],
-        drag_coefficient=friction_config['drag_coefficient']
+        drag_coefficient=friction_config['drag_coefficient'],
+        default_traction=surface_config.get('default_traction', 1.0)
     )
     
     # Create ground areas with different traction from config
-    surface_config = config['surfaces']
     ground_bodies = []
     for area in surface_config['ground_areas']:
         gnd = world.CreateStaticBody(userData={'obj': TDGroundArea(area['friction_modifier'])})
