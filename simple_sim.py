@@ -233,6 +233,7 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
     # If wheel spin isn't modeled, don't cap Fx by a slip curve of kappa=0.
     # Simply pass the driver's request forward; the ellipse will cap by muN.
     if wheel_omega is None:
+        # Always allow braking and acceleration requests; velocity clamping happens later
         Fx_req = clamp(driver_Fx_request, -muN, muN)
     else:
         Fx_from_slip = pure_longitudinal(st.kappa, muN, Cx=Cx)
@@ -261,8 +262,8 @@ def skid_intensity(alpha: float, kappa: float,
 
 def map_driver_inputs(throttle_01: float, brake_01: float,
                       Fx_drive_max: float, Fx_brake_max: float) -> float:
-    """Map throttle/brake to driver force request."""
-    if brake_01 > throttle_01:
+    """Map throttle/brake to driver force request. Brake takes priority."""
+    if brake_01 >= throttle_01 and brake_01 > 0:
         return - brake_01 * Fx_brake_max
     return throttle_01 * Fx_drive_max
 
@@ -444,6 +445,16 @@ class TDTire(object):
             vel_damping_x = -excess * fwd.x
             vel_damping_y = -excess * fwd.y
             self.body.linearVelocity = b2Vec2(vel.x + vel_damping_x, vel.y + vel_damping_y)
+        
+        # Prevent reverse velocity (no reverse gear)
+        if v_long < 0:
+            # Remove backward velocity component
+            vel = self.body.linearVelocity
+            v_long = vel.x * fwd.x + vel.y * fwd.y
+            if v_long < 0:
+                vel_damping_x = -v_long * fwd.x
+                vel_damping_y = -v_long * fwd.y
+                self.body.linearVelocity = b2Vec2(vel.x + vel_damping_x, vel.y + vel_damping_y)
         
         # Convert forces to world frame and apply
         F_world = tire_forces_to_world(forces, fwd_world, right_world)
