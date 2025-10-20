@@ -137,18 +137,21 @@ def clamp(x: float, lo: float, hi: float) -> float:
 
 def compute_tire_state(vel_world, fwd_world, right_world, wheel_radius: float,
                        wheel_omega: float|None = None,
-                       v_ref: float = 3.0):
+                       v_ref: float = 3.0,
+                       v_alpha_ref: float = 1.0):
     """
     vel_world, fwd_world, right_world are 2D vectors (x,y) in world frame.
     wheel_omega can be None if you don't model wheel spin; we'll kappa≈0 then.
     v_ref is a small reference speed to stabilize divisions.
+    v_alpha_ref is a reference speed added to longitudinal for slip angle (prevents blow-up at low speed).
     """
     v_long = vel_world[0]*fwd_world[0] + vel_world[1]*fwd_world[1]
     v_lat  = vel_world[0]*right_world[0] + vel_world[1]*right_world[1]
     speed  = max(EPS, (v_long**2 + v_lat**2) ** 0.5)
 
-    # Slip angle: sign follows v_lat; bounded for stability at low speed
-    alpha = atan2(v_lat, max(EPS, abs(v_long)))
+    # Slip angle: sign follows v_lat; add reference speed to denominator to prevent blow-up at low v_long
+    # When v_long≈0, alpha would spike with tiny v_lat; v_alpha_ref keeps it bounded
+    alpha = atan2(v_lat, max(EPS, abs(v_long) + v_alpha_ref))
 
     # Slip ratio kappa: if you don't track wheel spin, set to 0 by default.
     if wheel_omega is None:
@@ -384,7 +387,12 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
 
     # 3) Pure-slip (lateral) + driver longitudinal request
     muN = mu * N
-    Fy_pure = pure_lateral(st.alpha, muN, Ca=Ca)
+    
+    # Speed softening for lateral stiffness: at low speeds, reduce Ca to allow longitudinal force build
+    # soft ≈ 0 at standstill → 1 above ~1 m/s; prevents alpha blow-up from locking all grip to lateral
+    soft = st.speed / max(EPS, st.speed + 1.0)
+    Ca_eff = Ca * soft
+    Fy_pure = pure_lateral(st.alpha, muN, Ca=Ca_eff)
     
     # (Patch C, improved) Map driver command directly to target slip ratio via pedal fraction
     # This ensures full braking force even after brake distribution scaling
@@ -707,10 +715,26 @@ class TDTire(object):
         rolling_resistance_coeff = 0.018
         self.last_F_rr = rolling_resistance_coeff * normal_load
         
-        # Compute cornering slip work (energy lost to lateral slip)
-        # Simplified: proportional to slip angle magnitude and lateral force
-        if tire_state and abs(tire_state.alpha) > 0.01:  # Only when slipping
-            self.last_F_corner = abs(forces.Fy) * abs(tire_state.alpha) / max(0.01, tire_state.alpha) * 0.5
+        # Cornering power loss: lateral slip work converted to longitudinal drag
+        # When tires slip laterally, rubber does work and heats—model as drag
+        # Proportional to lateral force × slip angle, scaled to peak slip
+        k_corner = 0.008  # Cornering loss coefficient [s/m]; tunable 0.005–0.02
+        
+        if tire_state and self.slip_angle_peak > 0:
+            # Scale by slip angle normalized to peak
+            scale = abs(tire_state.alpha) / self.slip_angle_peak
+            scale = min(2.0, scale)  # Cap to avoid huge growth past peak
+            
+            # Cornering drag force
+            F_corner = k_corner * abs(forces.Fy) * scale
+            
+            # Apply opposite to tire forward direction (creates longitudinal drag)
+            fwd = self.body.GetWorldVector((0, 1))
+            F_loss_world = (-F_corner * fwd.x, -F_corner * fwd.y)
+            self.body.ApplyForce(F_loss_world, self.body.worldCenter, True)
+            
+            # Store for engine load reflection
+            self.last_F_corner = F_corner
         else:
             self.last_F_corner = 0.0
 
