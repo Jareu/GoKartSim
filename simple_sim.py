@@ -111,11 +111,22 @@ class SimpleEngine:
         self.T_e = max(0.0, self.T_e - T_loss)
 
         # 6) Engine dynamics with load reflected through fixed ratio
-        T_load = max(0.0, axle_torque) / max(1e-6, G * max(1e-3, eta))
+        # axle_torque is the load opposing the engine (from tire friction/resistance)
+        # Negative axle_torque means tires are trying to drag engine back (braking)
+        # Positive axle_torque means tires need torque from engine (acceleration)
+        T_load = axle_torque / max(1e-6, G * max(1e-3, eta))
         domega = (self.T_e - T_load) / max(1e-6, self.cfg.J_e)
+        
+        # Apply RPM change, but maintain minimum idle speed
         omega_min = 2 * math.pi * self.cfg.rpm_idle / 60.0
         omega_max = 2 * math.pi * self.cfg.rpm_redline / 60.0
-        self.omega_e = clamp(self.omega_e + dt * domega, omega_min, omega_max)
+        new_omega = self.omega_e + dt * domega
+        
+        # If below idle and throttle is off, hold at idle; otherwise allow natural dynamics
+        if new_omega < omega_min and throttle_cmd < 0.1:
+            self.omega_e = omega_min  # Hold at idle when coasting below idle
+        else:
+            self.omega_e = clamp(new_omega, omega_min, omega_max)  # Allow acceleration, clamp to redline
 
         return self.T_e  # crank torque available to driveline
 
@@ -571,6 +582,13 @@ class TDTire(object):
         # Driver input fractions (0-1) for fine-grained brake distribution
         self.throttle_frac = 0.0  # 0 = no throttle, 1 = full throttle
         self.brake_frac = 0.0     # 0 = no braking, 1 = full braking
+        
+        # Last-frame force tracking for engine load (resistive torques only)
+        self.last_forces = TireForces(0.0, 0.0)  # Last computed forces
+        self.last_alpha = 0.0      # Last slip angle [rad]
+        self.last_normal = 0.0     # Last normal load [N]
+        self.last_F_rr = 0.0       # Last rolling resistance [N]
+        self.last_F_corner = 0.0   # Last cornering resistance (slip work) [N]
 
         self.body = world.CreateDynamicBody(position=position)
         self.body.CreatePolygonFixture(box=dimensions, density=1.0)
@@ -678,6 +696,23 @@ class TDTire(object):
         # (Fix 3) Do NOT apply counter-torque to tire body
         # The revolute joint already constrains relative yaw; applying -Mz can inject jitter
         # self.body.ApplyTorque(-Mz, True)  # REMOVED
+        
+        # Store last-frame tire forces and state for engine load calculation
+        self.last_forces = forces
+        self.last_alpha = tire_state.alpha if tire_state else 0.0
+        self.last_normal = normal_load
+        
+        # Compute rolling resistance (proportional to normal load)
+        # Rolling resistance coefficient for go-kart tires on asphalt: ~0.015-0.02
+        rolling_resistance_coeff = 0.018
+        self.last_F_rr = rolling_resistance_coeff * normal_load
+        
+        # Compute cornering slip work (energy lost to lateral slip)
+        # Simplified: proportional to slip angle magnitude and lateral force
+        if tire_state and abs(tire_state.alpha) > 0.01:  # Only when slipping
+            self.last_F_corner = abs(forces.Fy) * abs(tire_state.alpha) / max(0.01, tire_state.alpha) * 0.5
+        else:
+            self.last_F_corner = 0.0
 
     def add_ground_area(self, ud):
         if ud not in self.ground_areas:
@@ -755,6 +790,9 @@ class TDCar(object):
         self.driveline_eta = driveline_eta
         self.Fx_engine_cap_per_wheel = float('inf')  # No cap initially
         
+        # Solid-axle scrub torque from differential slip (steering in slow turns)
+        self.last_T_scrub_axle = 0.0
+
         # Create tires with default_traction passed through
         wheel_radius = tire_kws.get('wheel_radius', 0.10)
         self.wheel_radius = wheel_radius
@@ -886,28 +924,49 @@ class TDCar(object):
                         # Preserve 0..1 feel per axle by scaling throttle fraction
                         tire.throttle_frac = min(1.0, old_throttle_frac * scale * 2.0)
 
-        # Step engine and compute available drive force cap
+        # Step engine with clean load reflection (clean separation principle)
         if self.engine is not None:
-            # Calculate axle speed from chassis forward velocity
-            fwd = self.body.GetWorldVector((0, 1))
-            v = self.body.linearVelocity
-            v_long_car = v.x * fwd.x + v.y * fwd.y
-            omega_axle = v_long_car / max(EPS, self.wheel_radius)
+            # Compute solid-axle scrub torque from differential slip
+            # In slow turns, inside wheel slower than outside, creating internal slip
+            rear_left_vel = self.tires[0].body.linearVelocity
+            rear_right_vel = self.tires[1].body.linearVelocity
+            rear_left_speed = math.sqrt(rear_left_vel.x**2 + rear_left_vel.y**2)
+            rear_right_speed = math.sqrt(rear_right_vel.x**2 + rear_right_vel.y**2)
+            speed_diff = abs(rear_left_speed - rear_right_speed)
             
-            # Sum opposing axle torque from driven wheels (rear-only)
-            axle_torque_load = 0.0
-            for i, tire in enumerate([self.tires[0], self.tires[1]]):  # RL, RR
-                if tire.driver_Fx_request > 0.0:
-                    axle_torque_load += tire.driver_Fx_request * self.wheel_radius
+            # Scrub torque proportional to speed differential and track width
+            track_width = self.track
+            if speed_diff > 0.1:
+                self.last_T_scrub_axle = speed_diff * track_width * 0.5  # Tuning factor
+            else:
+                self.last_T_scrub_axle = 0.0
+            
+            # Sum all resistive torques from rear tires (0=RL, 1=RR)
+            T_axle_resist = 0.0
+            for tire in self.tires[:2]:
+                # Only resistive forces; engine doesn't "see" its own drive force
+                F_resist = max(0.0, tire.last_F_rr) + max(0.0, tire.last_F_corner)
+                T_axle_resist += F_resist * self.wheel_radius
+            
+            # Add solid-axle scrub
+            T_axle_resist += self.last_T_scrub_axle
+            
+            # Optionally add aerodynamic drag reflected to axle
+            v = self.body.linearVelocity
+            speed = math.sqrt(v.x**2 + v.y**2)
+            if speed > 1e-3:
+                # Simplified aero: rho=1.2 kg/m³, CdA=0.18 m² (small kart)
+                F_aero = 0.5 * 1.2 * 0.18 * speed * speed
+                T_axle_resist += F_aero * self.wheel_radius
             
             # Driver throttle from rear tires (same for both)
             throttle_cmd = max((self.tires[0].throttle_frac, self.tires[1].throttle_frac)) if any(t.throttle_frac > 0 for t in self.tires[:2]) else 0.0
             
-            # Step engine
+            # Step engine with clean resistive torque (no propulsive forces)
             _ = self.engine.step(
                 dt=time_step,
                 throttle_cmd=throttle_cmd,
-                axle_torque=axle_torque_load,
+                axle_torque=T_axle_resist,
                 G=self.gear_ratio,
                 eta=self.driveline_eta
             )
@@ -1004,6 +1063,91 @@ class ContactListener(b2ContactListener):
                 tire.add_ground_area(ground_area)
             else:
                 tire.remove_ground_area(ground_area)
+
+
+# ============================================================================
+# UI / Gauge Drawing Helpers
+# ============================================================================
+
+def draw_rpm_gauge(screen, rpm, rpm_max=6500, x=80, y=80, radius=60):
+    """
+    Draw a simple RPM needle gauge in the top-left corner.
+    rpm_max defines full scale (default 6500 RPM for redline).
+    """
+    # Gauge background (circle)
+    pygame.draw.circle(screen, (60, 60, 60), (x, y), radius)
+    pygame.draw.circle(screen, (200, 200, 200), (x, y), radius, 2)
+    
+    # Gauge ticks and labels
+    for i in range(0, 7):  # 0 to 6500 in 1000 RPM increments
+        angle_deg = 180 + (i * 30)  # 180 to 0 degrees (half circle)
+        angle_rad = math.radians(angle_deg)
+        
+        # Outer tick
+        x1 = x + (radius - 10) * math.cos(angle_rad)
+        y1 = y + (radius - 10) * math.sin(angle_rad)
+        
+        # Inner tick
+        x2 = x + (radius - 5) * math.cos(angle_rad)
+        y2 = y + (radius - 5) * math.sin(angle_rad)
+        
+        pygame.draw.line(screen, (200, 200, 200), (x1, y1), (x2, y2), 2)
+        
+        # Label (every 1000 RPM)
+        label_x = x + (radius - 25) * math.cos(angle_rad)
+        label_y = y + (radius - 25) * math.sin(angle_rad)
+        font_small = pygame.font.Font(None, 20)
+        text = font_small.render(f"{i}k", True, (200, 200, 200))
+        screen.blit(text, (label_x - 8, label_y - 8))
+    
+    # Needle (red if near redline)
+    rpm_ratio = min(1.0, rpm / rpm_max)
+    needle_angle_deg = 180 + (rpm_ratio * 180)  # 180 to 0 degrees
+    needle_angle_rad = math.radians(needle_angle_deg)
+    
+    needle_length = radius - 15
+    needle_x = x + needle_length * math.cos(needle_angle_rad)
+    needle_y = y + needle_length * math.sin(needle_angle_rad)
+    
+    # Needle color: yellow/orange if > 5500 RPM, green otherwise
+    needle_color = (255, 100, 0) if rpm > 5500 else (100, 200, 100)
+    pygame.draw.line(screen, needle_color, (x, y), (needle_x, needle_y), 3)
+    
+    # Center hub
+    pygame.draw.circle(screen, (100, 100, 100), (x, y), 5)
+    
+    # Label
+    font_label = pygame.font.Font(None, 24)
+    label_text = font_label.render("RPM", True, (200, 200, 200))
+    screen.blit(label_text, (x - 20, y + radius + 10))
+    
+    # Numeric RPM display below label
+    font_rpm_value = pygame.font.Font(None, 20)
+    rpm_value_text = font_rpm_value.render(f"{int(rpm)}", True, (100, 200, 100))
+    screen.blit(rpm_value_text, (x - 15, y + radius + 35))
+
+
+def draw_speedometer(screen, speed_mps, speed_max=40.0, x=1520, y=80):
+    """
+    Draw a numerical speedometer in the top-right corner.
+    Displays speed in km/h only.
+    """
+    # Background panel
+    panel_width = 120
+    panel_height = 70
+    pygame.draw.rect(screen, (40, 40, 40), (x - panel_width, y, panel_width, panel_height))
+    pygame.draw.rect(screen, (200, 200, 200), (x - panel_width, y, panel_width, panel_height), 2)
+    
+    # Speed in km/h (large, centered)
+    speed_kmh = speed_mps * 3.6
+    font_large = pygame.font.Font(None, 36)
+    speed_text = font_large.render(f"{speed_kmh:.0f}", True, (100, 200, 100))
+    screen.blit(speed_text, (x - panel_width + 35, y + 8))
+    
+    # Unit label (km/h)
+    font_small = pygame.font.Font(None, 16)
+    unit_text = font_small.render("km/h", True, (150, 150, 150))
+    screen.blit(unit_text, (x - panel_width + 28, y + 45))
 
 
 def main():
@@ -1320,6 +1464,10 @@ def main():
             vertices = [(tire.body.transform * v) * zoom for v in tire.body.fixtures[0].shape.vertices]
             vertices_screen = [(v[0] - camera_x, v[1] - camera_y) for v in vertices]
             pygame.draw.polygon(screen, (20, 20, 20), vertices_screen)
+        
+        # Draw gauges
+        draw_rpm_gauge(screen, car.engine.omega_e * 60.0 / (2 * math.pi), rpm_max=car.engine.cfg.rpm_redline)
+        draw_speedometer(screen, speed)
         
         pygame.display.flip()
         clock.tick(TARGET_FPS)
