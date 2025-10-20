@@ -200,6 +200,26 @@ def combine_forces(Fx_req: float, Fy_req: float, muN: float,
     return TireForces(Fx_req * scale, Fy_req * scale)
 
 
+def ellipse_saturation(Fx_req: float, Fy_req: float, muN: float,
+                       ellip_x: float = 1.0, ellip_y: float = 1.0) -> float:
+    """
+    Calculate how far into ellipse saturation the requested forces are.
+    Returns 0 if inside ellipse, increasing toward 1 as forces exceed boundary.
+    Useful for detecting braking lockup and generating skid signals.
+    """
+    # Normalize by ellipse axes
+    ax = max(EPS, muN * max(EPS, ellip_x))
+    ay = max(EPS, muN * max(EPS, ellip_y))
+    
+    # Normalized distance on ellipse
+    rx = Fx_req / ax
+    ry = Fy_req / ay
+    r = sqrt(rx*rx + ry*ry)
+    
+    # Return how much we exceed 1.0 (the boundary)
+    return clamp(r - 1.0, 0.0, 1.0)
+
+
 def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
                         wheel_radius: float,
                         wheel_omega: float|None,
@@ -212,12 +232,17 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
                         Ca: float = 8000.0,
                         Cx: float = 12000.0,
                         ellip_x: float = 1.0,
-                        ellip_y: float = 1.0):
+                        ellip_y: float = 1.0,
+                        brake_frac: float = 0.0,
+                        throttle_frac: float = 0.0,
+                        raw_driver_Fx_request: float = 0.0):
     """
     Returns (Fx, Fy) in the TIRE FRAME (apply in world via basis vectors).
     Ca: cornering stiffness [N/rad]
     Cx: longitudinal stiffness [N]
     ellip_x, ellip_y: ellipse bias factors for combined-slip limiting
+    brake_frac, throttle_frac: driver pedal inputs [0..1]
+    raw_driver_Fx_request: original driver request before brake distribution (for saturation)
     """
     # 1) Kinematics -> tire state
     st = compute_tire_state(tire_vel_world, tire_fwd_world, tire_right_world,
@@ -230,18 +255,40 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
     muN = mu * N
     Fy_pure = pure_lateral(st.alpha, muN, Ca=Ca)
     
-    # If wheel spin isn't modeled, don't cap Fx by a slip curve of kappa=0.
-    # Simply pass the driver's request forward; the ellipse will cap by muN.
+    # (Patch C, improved) Map driver command directly to target slip ratio via pedal fraction
+    # This ensures full braking force even after brake distribution scaling
     if wheel_omega is None:
-        # Always allow braking and acceleration requests; velocity clamping happens later
-        Fx_req = clamp(driver_Fx_request, -muN, muN)
+        # Map brake/throttle fractions directly to slip ratio (not through desire/muN)
+        # This preserves full strength: brake_frac=1.0 → κ=-0.12 always
+        kappa_peak = 0.12  # slip_ratio_peak
+        
+        if brake_frac > throttle_frac:  # Braking priority
+            kappa_target = -brake_frac * kappa_peak
+        else:  # Acceleration
+            kappa_target = throttle_frac * kappa_peak
+        
+        Fx_req = pure_longitudinal(kappa_target, muN, Cx=Cx)
+        
+        # (Fix C) Static friction dead-zone: when almost stopped and braking, limit backward force
+        # Only apply this limiter when speed is very low (< 0.05 m/s)
+        if abs(st.v_long) < 0.05 and kappa_target < 0.0:
+            # Limit max backward force to 50N, and only when actually moving forward
+            Fx_req = -min(abs(Fx_req), 50.0) * (st.v_long > 0.0)
     else:
         Fx_from_slip = pure_longitudinal(st.kappa, muN, Cx=Cx)
         Fx_req = clamp(driver_Fx_request, -abs(Fx_from_slip), abs(Fx_from_slip))
 
+    # (Fix A, improved) Compute saturation from raw driver request (before brake distribution)
+    # This way, hard braking on the pedal produces saturation even if brake biasing reduces per-tire force
+    # Use raw_driver_Fx_request if available, otherwise fall back to driver_Fx_request
+    sat_request_fx = raw_driver_Fx_request if raw_driver_Fx_request != 0.0 else driver_Fx_request
+    pre_sat = ellipse_saturation(sat_request_fx, Fy_pure, muN, ellip_x, ellip_y)
+    
     # 4) Combined-slip saturation via ellipse
     forces = combine_forces(Fx_req, Fy_pure, muN, ellip_x=ellip_x, ellip_y=ellip_y)
-    return forces, st
+    
+    # Return forces and saturation signal for skid detection
+    return forces, st, pre_sat
 
 
 def tire_forces_to_world(F: TireForces, fwd_world, right_world):
@@ -362,6 +409,11 @@ class TDTire(object):
         self.tire_state = None  # Will store TireState
         self.is_braking = False
         self.driver_Fx_request = 0.0  # Requested longitudinal force
+        self.raw_driver_Fx_request = 0.0  # Original request before brake distribution
+        
+        # Driver input fractions (0-1) for fine-grained brake distribution
+        self.throttle_frac = 0.0  # 0 = no throttle, 1 = full throttle
+        self.brake_frac = 0.0     # 0 = no braking, 1 = full braking
 
         self.body = world.CreateDynamicBody(position=position)
         self.body.CreatePolygonFixture(box=dimensions, density=1.0)
@@ -384,12 +436,17 @@ class TDTire(object):
         brake = 1.0 if 'down' in keys else 0.0
         self.is_braking = brake > 0.0
         
+        # Store fractions for brake distribution control
+        self.throttle_frac = throttle
+        self.brake_frac = brake
+        
         # Convert to force request
         self.driver_Fx_request = map_driver_inputs(
             throttle, brake, 
             self.max_drive_force, 
             self.max_brake_force
         )
+        self.raw_driver_Fx_request = self.driver_Fx_request # Store original request
     
     def apply_tire_forces(self, normal_load: float, N0_ref: float, 
                           a_long: float, a_lat: float):
@@ -405,7 +462,7 @@ class TDTire(object):
         right_world = (right.x, right.y)
         
         # Compute tire forces using new physics model
-        forces, tire_state = compute_tire_forces(
+        forces, tire_state, pre_sat = compute_tire_forces(
             tire_vel_world=tire_vel,
             tire_fwd_world=fwd_world,
             tire_right_world=right_world,
@@ -422,17 +479,31 @@ class TDTire(object):
             Ca=self.cornering_stiffness,
             Cx=self.longitudinal_stiffness,
             ellip_x=self.ellipse_bias_x,
-            ellip_y=self.ellipse_bias_y
+            ellip_y=self.ellipse_bias_y,
+            brake_frac=self.brake_frac,
+            throttle_frac=self.throttle_frac,
+            raw_driver_Fx_request=self.raw_driver_Fx_request # Pass raw request
         )
         
         # Store state for skid marks
         self.tire_state = tire_state
-        self.skid_intensity = skid_intensity(
+        
+        # Calculate slip-based intensity (α and κ contribution)
+        slip_sig = skid_intensity(
             tire_state.alpha, 
             tire_state.kappa,
             self.slip_angle_peak,
             self.slip_ratio_peak
         )
+        
+        # (Fix A) Use pre-ellipse saturation to detect braking lockup
+        # pre_sat measures how much the request exceeded friction before limiting
+        sat_sig = pre_sat
+        
+        # Combine signals: slip-based for cornering/braking slip, saturation for lockup
+        combined_sig = max(slip_sig, sat_sig)
+        # Light smoothing to avoid jitter
+        self.skid_intensity = 0.85 * self.skid_intensity + 0.15 * combined_sig
         self.is_skidding = self.skid_intensity > 0.1
         
         # Enforce max_forward_speed: limit longitudinal velocity
@@ -558,8 +629,11 @@ class TDCar(object):
             tire.body.position = self.body.worldCenter + anchor
             joints.append(j)
 
-    def update(self, keys, hz, time_step):
-        """Update car physics with weight transfer and tire forces."""
+    def update(self, keys, hz, time_step, brake_config=None):
+        """Update car physics with weight transfer and tire forces.
+        
+        brake_config: dict with 'front_bias' and 'rear_bias' for brake distribution
+        """
         
         # Calculate accelerations from velocity change
         current_vel = self.body.linearVelocity
@@ -592,6 +666,25 @@ class TDCar(object):
         # Set driver inputs (throttle/brake) for all tires
         for tire in self.tires:
             tire.set_driver_inputs(keys)
+        
+        # Apply rear-biased brake distribution (Patch B)
+        if brake_config:
+            front_bias = brake_config.get('front_bias', 0.5)
+            rear_bias = brake_config.get('rear_bias', 0.5)
+            # Normalize so front + rear = 1.0 per axle
+            s = max(EPS, front_bias + rear_bias)
+            front_bias /= s
+            rear_bias /= s
+            
+            # Apply per-tire: RL=0, RR=1, FL=2, FR=3
+            # Rear tires get rear_bias, front tires get front_bias
+            brake_scales = [rear_bias * 0.5, rear_bias * 0.5, 
+                           front_bias * 0.5, front_bias * 0.5]
+            
+            for tire, scale in zip(self.tires, brake_scales):
+                # Only scale if braking (Fx_req < 0)
+                if tire.driver_Fx_request < 0.0:
+                    tire.driver_Fx_request *= scale
         
         # Apply tire forces with weight transfer
         # Order: RL=0, RR=1, FL=2, FR=3
@@ -708,6 +801,7 @@ def main():
     tire_config = vehicle_config['tires']
     friction_config = vehicle_config['friction']
     steering_config = vehicle_config['steering']
+    brake_config = vehicle_config.get('brakes', {'front_bias': 0.5, 'rear_bias': 0.5})
     surface_config = config['surfaces']
     
     # Create the car with config parameters
@@ -830,7 +924,7 @@ def main():
                 camera_y += (world_y_before - world_y_after) * zoom
         
         # Update car with new tire physics
-        car.update(pressed_keys, TARGET_FPS, TIME_STEP)
+        car.update(pressed_keys, TARGET_FPS, TIME_STEP, brake_config)
         
         # Apply aerodynamic and rotational damping for stability
         drag_coeff = friction_config.get('drag_coefficient', 0.3)
@@ -950,11 +1044,6 @@ def main():
             vertices = [(tire.body.transform * v) * zoom for v in tire.body.fixtures[0].shape.vertices]
             vertices_screen = [(v[0] - camera_x, v[1] - camera_y) for v in vertices]
             pygame.draw.polygon(screen, (20, 20, 20), vertices_screen)
-        
-        # Draw skidding indicator
-        if car.is_skidding():
-            skid_text = font.render("SKIDDING", True, (255, 255, 0))
-            screen.blit(skid_text, (20, SCREEN_HEIGHT - 60))
         
         pygame.display.flip()
         clock.tick(TARGET_FPS)

@@ -33,7 +33,7 @@
       "max_forward_speed": 30.0,
       "max_backward_speed": 0,
       "max_drive_force": 600,
-      "max_brake_force": 2400,
+      "max_brake_force": 10000,
       "cornering_stiffness": 8000.0,
       "longitudinal_stiffness": 12000.0,
       "slip_angle_peak": 0.1,
@@ -45,13 +45,17 @@
       "lock_angle_degrees": 35.0,
       "turn_speed_degrees_per_sec": 180.0
     },
+    "brakes": {
+      "front_bias": 0.2,
+      "rear_bias": 0.8
+    },
     "friction": {
       "angular_damping_factor": 0.1,
       "drag_coefficient": 0.3
     }
   },
   "surfaces": {
-    "default_traction": 1.5,
+    "default_traction": 1.1,
     "ground_areas": [
       {
         "name": "wet_patch",
