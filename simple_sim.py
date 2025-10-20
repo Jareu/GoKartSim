@@ -220,6 +220,38 @@ def ellipse_saturation(Fx_req: float, Fy_req: float, muN: float,
     return clamp(r - 1.0, 0.0, 1.0)
 
 
+def aligning_moment(Fy: float, alpha: float,
+                    alpha_peak: float = 0.10,
+                    trail0: float = 0.06) -> float:
+    """
+    Simple pneumatic-trail model for self-aligning torque (yaw stiffness).
+    
+    When a tire is steered, the lateral force acts slightly behind the wheel center
+    by a distance called the pneumatic trail (trail0). This creates a restoring
+    torque that tends to align the wheel back toward the direction of travel.
+    
+    trail0: pneumatic trail distance in meters (typically 0.04..0.08 m on front)
+    alpha_peak: slip angle at which tire transitions from cornering to sliding
+    alpha: current slip angle [rad]
+    Fy: current lateral force [N]
+    
+    Returns: Mz (N·m), applied about vertical axis (>0 CCW). Typically negative
+    to create a restoring torque that reduces slip angle.
+    """
+    if alpha_peak <= 0:
+        return 0.0
+    
+    # Linear decay of trail with |alpha| up to alpha_peak
+    # At |alpha| = 0: trail = trail0 (max)
+    # At |alpha| = alpha_peak: trail = 0 (transition to slide)
+    s = max(0.0, 1.0 - abs(alpha) / alpha_peak)
+    trail = trail0 * s
+    
+    # Aligning torque: negative Fy with positive trail creates restorative yaw
+    # (-) sign: torque opposes slip angle growth
+    return -Fy * trail
+
+
 def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
                         wheel_radius: float,
                         wheel_omega: float|None,
@@ -235,14 +267,18 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
                         ellip_y: float = 1.0,
                         brake_frac: float = 0.0,
                         throttle_frac: float = 0.0,
-                        raw_driver_Fx_request: float = 0.0):
+                        raw_driver_Fx_request: float = 0.0,
+                        slip_angle_peak: float = 0.10,
+                        pneumatic_trail0: float = 0.06):
     """
-    Returns (Fx, Fy) in the TIRE FRAME (apply in world via basis vectors).
+    Returns (Fx, Fy, Mz) in the TIRE FRAME (apply in world via basis vectors).
     Ca: cornering stiffness [N/rad]
     Cx: longitudinal stiffness [N]
     ellip_x, ellip_y: ellipse bias factors for combined-slip limiting
     brake_frac, throttle_frac: driver pedal inputs [0..1]
     raw_driver_Fx_request: original driver request before brake distribution (for saturation)
+    slip_angle_peak: slip angle at peak lateral force [rad]
+    pneumatic_trail0: pneumatic trail distance [m] for aligning torque
     """
     # 1) Kinematics -> tire state
     st = compute_tire_state(tire_vel_world, tire_fwd_world, tire_right_world,
@@ -265,7 +301,10 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
         if brake_frac > throttle_frac:  # Braking priority
             kappa_target = -brake_frac * kappa_peak
         else:  # Acceleration
-            kappa_target = throttle_frac * kappa_peak
+            # (Fix 2A) Add throttle headroom to avoid constant saturation
+            # At full throttle, request ~60% of peak slip to leave lateral budget
+            throttle_headroom = 0.6
+            kappa_target = throttle_frac * kappa_peak * throttle_headroom
         
         Fx_req = pure_longitudinal(kappa_target, muN, Cx=Cx)
         
@@ -278,17 +317,33 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
         Fx_from_slip = pure_longitudinal(st.kappa, muN, Cx=Cx)
         Fx_req = clamp(driver_Fx_request, -abs(Fx_from_slip), abs(Fx_from_slip))
 
-    # (Fix A, improved) Compute saturation from raw driver request (before brake distribution)
-    # This way, hard braking on the pedal produces saturation even if brake biasing reduces per-tire force
-    # Use raw_driver_Fx_request if available, otherwise fall back to driver_Fx_request
-    sat_request_fx = raw_driver_Fx_request if raw_driver_Fx_request != 0.0 else driver_Fx_request
+    # (Fix 1) Telemetry fix: use post-bias force for accel saturation, raw for brake
+    # Braking: use RAW request to show lockup attempt (even if bias reduces per-tire force)
+    # Acceleration: use POST-BIAS request so fronts don't "skid" when they have no drive
+    if driver_Fx_request < 0.0:     # braking
+        sat_request_fx = raw_driver_Fx_request if raw_driver_Fx_request != 0.0 else driver_Fx_request
+    else:                            # acceleration
+        sat_request_fx = driver_Fx_request
     pre_sat = ellipse_saturation(sat_request_fx, Fy_pure, muN, ellip_x, ellip_y)
     
-    # 4) Combined-slip saturation via ellipse
-    forces = combine_forces(Fx_req, Fy_pure, muN, ellip_x=ellip_x, ellip_y=ellip_y)
+    # (Patch 3) Gentle throttle-understeer bias: favor longitudinal when driving
+    ellip_x_eff = ellip_x
+    ellip_y_eff = ellip_y
+    if throttle_frac > brake_frac and throttle_frac > 0.1:
+        # Gentle longitudinal bias when driving (5% instead of 10%)
+        ellip_x_eff = ellip_x * (1.0 + 0.05 * throttle_frac)   # +5% at full throttle
+        ellip_y_eff = ellip_y * (1.0 - 0.025 * throttle_frac)  # -2.5% at full throttle
     
-    # Return forces and saturation signal for skid detection
-    return forces, st, pre_sat
+    # 4) Combined-slip saturation via ellipse
+    forces = combine_forces(Fx_req, Fy_pure, muN, ellip_x=ellip_x_eff, ellip_y=ellip_y_eff)
+    
+    # (Patch 1) Compute self-aligning moment (pneumatic trail torque)
+    Mz = aligning_moment(Fy=forces.Fy, alpha=st.alpha,
+                         alpha_peak=slip_angle_peak,
+                         trail0=pneumatic_trail0)
+    
+    # Return forces, state, saturation signal, and aligning torque
+    return forces, st, pre_sat, Mz
 
 
 def tire_forces_to_world(F: TireForces, fwd_world, right_world):
@@ -376,12 +431,14 @@ class TDTire(object):
                  slip_ratio_peak=0.12,
                  ellipse_bias_x=1.0,
                  ellipse_bias_y=1.0,
+                 pneumatic_trail0=0.06,
                  dimensions=(0.12, 0.20), 
                  tire_mass=3.0,
                  default_traction=1.0,
                  position=(0, 0)):
 
         world = car.body.world
+        self.car = car  # Store reference for applying aligning torque
 
         # Tire physical parameters
         self.wheel_radius = wheel_radius
@@ -396,6 +453,7 @@ class TDTire(object):
         self.longitudinal_stiffness = longitudinal_stiffness  # Cx [N]
         self.slip_angle_peak = slip_angle_peak  # rad
         self.slip_ratio_peak = slip_ratio_peak
+        self.pneumatic_trail0 = pneumatic_trail0  # Self-aligning moment parameter
         
         # Ellipse bias for combined-slip limiting
         self.ellipse_bias_x = ellipse_bias_x  # >1 favors longitudinal, <1 favors lateral
@@ -462,7 +520,7 @@ class TDTire(object):
         right_world = (right.x, right.y)
         
         # Compute tire forces using new physics model
-        forces, tire_state, pre_sat = compute_tire_forces(
+        forces, tire_state, pre_sat, Mz = compute_tire_forces(
             tire_vel_world=tire_vel,
             tire_fwd_world=fwd_world,
             tire_right_world=right_world,
@@ -482,7 +540,9 @@ class TDTire(object):
             ellip_y=self.ellipse_bias_y,
             brake_frac=self.brake_frac,
             throttle_frac=self.throttle_frac,
-            raw_driver_Fx_request=self.raw_driver_Fx_request # Pass raw request
+            raw_driver_Fx_request=self.raw_driver_Fx_request, # Pass raw request
+            slip_angle_peak=self.slip_angle_peak,
+            pneumatic_trail0=self.pneumatic_trail0 # Assuming a default for pneumatic_trail0
         )
         
         # Store state for skid marks
@@ -530,6 +590,14 @@ class TDTire(object):
         # Convert forces to world frame and apply
         F_world = tire_forces_to_world(forces, fwd_world, right_world)
         self.body.ApplyForce(F_world, self.body.worldCenter, True)
+        
+        # (Patch 1) Apply self-aligning moment to chassis
+        # The pneumatic trail torque tends to restore the tire to the direction of travel
+        # This stabilizes the vehicle and prevents constant skatey steering feel
+        self.car.body.ApplyTorque(Mz, True)
+        # (Fix 3) Do NOT apply counter-torque to tire body
+        # The revolute joint already constrains relative yaw; applying -Mz can inject jitter
+        # self.body.ApplyTorque(-Mz, True)  # REMOVED
 
     def add_ground_area(self, ud):
         if ud not in self.ground_areas:
@@ -574,6 +642,7 @@ class TDCar(object):
                  position=(0, 0),
                  lock_angle_degrees=35.0, turn_speed_degrees_per_sec=180.0,
                  default_traction=1.0,
+                 drive_config=None,
                  **tire_kws):
         if vertices is None:
             vertices = TDCar.vertices
@@ -595,6 +664,9 @@ class TDCar(object):
         self.lock_angle = math.radians(lock_angle_degrees)
         self.turn_speed_per_sec = math.radians(turn_speed_degrees_per_sec)
         self.cg_height = cg_height
+        
+        # Drive configuration for throttle distribution
+        self.drive_config = drive_config or {'front_bias': 0.0, 'rear_bias': 1.0}
         
         # Create tires with default_traction passed through
         self.tires = [TDTire(self, default_traction=default_traction, **tire_kws) for i in range(4)]
@@ -686,6 +758,34 @@ class TDCar(object):
                 if tire.driver_Fx_request < 0.0:
                     tire.driver_Fx_request *= scale
         
+        # (Patch 2) Apply throttle distribution (rear-drive bias)
+        # By default, fronts get no drive force (front_bias=0.0, rear_bias=1.0)
+        drive_config = getattr(self, 'drive_config', {'front_bias': 0.0, 'rear_bias': 1.0})
+        if drive_config:
+            front_bias = drive_config.get('front_bias', 0.0)
+            rear_bias = drive_config.get('rear_bias', 1.0)
+            # Normalize so front + rear = 1.0 per axle
+            s = max(EPS, front_bias + rear_bias)
+            front_bias /= s
+            rear_bias /= s
+            
+            # Apply per-tire: RL=0, RR=1, FL=2, FR=3
+            throttle_scales = [rear_bias * 0.5, rear_bias * 0.5,
+                              front_bias * 0.5, front_bias * 0.5]
+            
+            for tire, scale in zip(self.tires, throttle_scales):
+                # Only scale when accelerating (Fx_request > 0)
+                if tire.driver_Fx_request > 0.0:
+                    old_throttle_frac = tire.throttle_frac
+                    tire.driver_Fx_request *= scale
+                    # (Fix 5) Ensure fronts never request drive
+                    # When scale is 0 (front tires with rear-bias), zero throttle_frac
+                    if scale == 0.0:
+                        tire.throttle_frac = 0.0
+                    else:
+                        # Preserve 0..1 feel per axle by scaling throttle fraction
+                        tire.throttle_frac = min(1.0, old_throttle_frac * scale * 2.0)
+
         # Apply tire forces with weight transfer
         # Order: RL=0, RR=1, FL=2, FR=3
         tire_names = ['RL', 'RR', 'FL', 'FR']
@@ -802,6 +902,7 @@ def main():
     friction_config = vehicle_config['friction']
     steering_config = vehicle_config['steering']
     brake_config = vehicle_config.get('brakes', {'front_bias': 0.5, 'rear_bias': 0.5})
+    drive_config = vehicle_config.get('drive', {'front_bias': 0.0, 'rear_bias': 1.0})
     surface_config = config['surfaces']
     
     # Create the car with config parameters
@@ -815,6 +916,7 @@ def main():
         lock_angle_degrees=steering_config['lock_angle_degrees'],
         turn_speed_degrees_per_sec=steering_config['turn_speed_degrees_per_sec'],
         default_traction=surface_config.get('default_traction', 1.0),
+        drive_config=drive_config,
         # Tire parameters
         wheel_radius=tire_config.get('wheel_radius', 0.10),
         dimensions=tuple(tire_config['dimensions']),
@@ -828,7 +930,8 @@ def main():
         slip_angle_peak=tire_config.get('slip_angle_peak', 0.10),
         slip_ratio_peak=tire_config.get('slip_ratio_peak', 0.12),
         ellipse_bias_x=tire_config.get('ellipse_bias_x', 1.0),
-        ellipse_bias_y=tire_config.get('ellipse_bias_y', 1.0)
+        ellipse_bias_y=tire_config.get('ellipse_bias_y', 1.0),
+        pneumatic_trail0=tire_config.get('pneumatic_trail0', 0.06)
     )
     
     # Create ground areas with different traction from config
