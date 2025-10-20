@@ -37,7 +37,7 @@ class TDTire(object):
     def __init__(self, car, max_forward_speed=100.0,
                  max_backward_speed=0,
                  max_drive_force=150,
-                 turn_torque=15, max_lateral_impulse=3,
+                 max_lateral_impulse=3,
                  dimensions=(0.5, 1.25), tire_mass=1.25,
                  angular_damping_factor=0.1, drag_coefficient=-2,
                  default_traction=1.0,
@@ -47,7 +47,6 @@ class TDTire(object):
 
         self.default_traction = default_traction
         self.current_traction = default_traction
-        self.turn_torque = turn_torque
         self.max_forward_speed = max_forward_speed
         self.max_backward_speed = max_backward_speed
         self.max_drive_force = max_drive_force
@@ -177,16 +176,6 @@ class TDTire(object):
 
         self.body.ApplyForce(self.current_traction * force * current_forward_normal,
                              self.body.worldCenter, True)
-
-    def update_turn(self, keys):
-        if 'left' in keys:
-            desired_torque = self.turn_torque
-        elif 'right' in keys:
-            desired_torque = -self.turn_torque
-        else:
-            return
-
-        self.body.ApplyTorque(desired_torque, True)
 
     def add_ground_area(self, ud):
         if ud not in self.ground_areas:
@@ -419,7 +408,6 @@ def main():
         max_forward_speed=tire_config['max_forward_speed'],
         max_backward_speed=tire_config['max_backward_speed'],
         max_drive_force=tire_config['max_drive_force'],
-        turn_torque=tire_config['turn_torque'],
         max_lateral_impulse=tire_config['max_lateral_impulse'],
         angular_damping_factor=friction_config['angular_damping_factor'],
         drag_coefficient=friction_config['drag_coefficient'],
