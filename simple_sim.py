@@ -76,7 +76,15 @@ class SimpleEngine:
             if rpm <= r1:
                 k = (rpm - r0) / max(1e-6, (r1 - r0))
                 return t0 + k * (t1 - t0)
-        return pts[-1][1]
+        
+        # Past the last knot: linearly fade to zero at redline
+        r_last, t_last = pts[-1]
+        if rpm < self.cfg.rpm_redline:
+            # Linear interpolation from last point down to 0 at redline
+            k = (rpm - r_last) / max(1e-6, (self.cfg.rpm_redline - r_last))
+            return max(0.0, t_last * (1.0 - k))
+        # At or past redline: zero torque
+        return 0.0
 
     def step(self, dt: float, throttle_cmd: float,
              axle_torque: float, G: float, eta: float):
@@ -97,13 +105,21 @@ class SimpleEngine:
         self.u_eff += dt * du
         self.u_eff = clamp(self.u_eff, 0.0, 1.0)
 
-        # 2) WOT torque at current rpm
-        rpm = max(600.0, min(self.cfg.rpm_redline, 
-                             self.omega_e * 60.0 / (2 * math.pi)))
-        T_wot = self._T_wot(rpm)
+        # 2) WOT torque at current rpm (use actual rpm, not clamped to redline)
+        rpm_actual = self.omega_e * 60.0 / (2 * math.pi)
+        rpm = max(600.0, rpm_actual)
+        T_wot = self._T_wot(min(rpm, self.cfg.rpm_redline))
 
-        # 3) Demanded torque from air charge
-        T_cmd = self.u_eff * T_wot
+        # Soft torque cut near redline: fade throttle effect as we approach redline
+        rpm_cut_start = self.cfg.rpm_redline - 300.0
+        if rpm >= rpm_cut_start and throttle_cmd > 0.05:
+            L = max(0.0, 1.0 - (rpm - rpm_cut_start) / max(1.0, (self.cfg.rpm_redline - rpm_cut_start)))
+        else:
+            L = 1.0
+
+        # 3) Demanded torque from air charge with rev-limiter factor
+        T_cmd = L * self.u_eff * T_wot
+
 
         # 4) Slew T_e toward T_cmd (unchanged)
         dT = T_cmd - self.T_e
@@ -496,24 +512,6 @@ def map_driver_inputs(throttle_01: float, brake_01: float,
         return - brake_01 * Fx_brake_max
     return throttle_01 * Fx_drive_max
 
-
-def apply_damping(body, drag_coefficient: float, angular_damping_factor: float, 
-                  time_step: float):
-    """
-    Apply rotational damping for stability at speed.
-    Note: Linear drag is now applied once in main loop using quadratic aero model.
-    drag_coefficient: deprecated (kept for compatibility)
-    angular_damping_factor: directly dampens angular velocity
-    """
-    if body is None or time_step <= 0:
-        return
-    
-    # Angular damping (rotational friction)
-    # Linear drag is now handled once per frame in main loop (quadratic model)
-    if angular_damping_factor > 0:
-        body.angularVelocity *= (1.0 - angular_damping_factor * time_step)
-
-
 # ============================================================================
 # Configuration Loading
 # ============================================================================
@@ -541,8 +539,6 @@ class TDTire(object):
 
     def __init__(self, car, 
                  wheel_radius=0.10,
-                 max_forward_speed=30.0,
-                 max_backward_speed=0,
                  max_drive_force=600,
                  max_brake_force=1800,
                  cornering_stiffness=8000.0,
@@ -565,8 +561,6 @@ class TDTire(object):
         # Tire physical parameters
         self.wheel_radius = wheel_radius
         self.default_traction = default_traction
-        self.max_forward_speed = max_forward_speed
-        self.max_backward_speed = max_backward_speed
         self.max_drive_force = max_drive_force
         self.max_brake_force = max_brake_force
         
@@ -1045,19 +1039,28 @@ class TDCar(object):
             
             omega_e_min = 2 * math.pi * self.engine.cfg.rpm_idle / 60.0
             omega_e_max = 2 * math.pi * self.engine.cfg.rpm_redline / 60.0
-            omega_e_lock = abs(self.gear_ratio * omega_axle)
+            omega_e_lock = self.gear_ratio * omega_axle
             
-            # Blend to avoid jitter: mostly locked, bit of compliance
-            blend = 0.8
-            self.engine.omega_e = clamp(
-                blend * omega_e_lock + (1.0 - blend) * self.engine.omega_e,
-                omega_e_min, omega_e_max
-            )
+            # Hard lock when we are at/over redline and throttle is on (Part A)
+            if omega_e_lock >= omega_e_max and throttle_cmd > 0.05:
+                self.engine.omega_e = omega_e_max
+            else:
+                # Soft compliance away from redline (keeps things stable at low speed)
+                blend = 0.8
+                self.engine.omega_e = max(
+                    omega_e_min,
+                    min(omega_e_max, blend*abs(omega_e_lock) + (1.0-blend)*self.engine.omega_e)
+                )
             
             # Calculate available drive force cap from engine torque (after kinematic lock)
             T_axle_avail = self.engine.T_e * self.gear_ratio * self.driveline_eta
             num_driven = 2  # rear-drive only
-            self.Fx_engine_cap_per_wheel = max(0.0, T_axle_avail / max(EPS, num_driven * self.wheel_radius))
+            Fx_cap = max(0.0, T_axle_avail / max(EPS, num_driven * self.wheel_radius))
+            
+            # Hard stop at redline under power (Part D): if locked engine speed corresponds to redline,
+            # don't allow any additional positive Fx to be applied that frame
+            at_redline = (abs(self.engine.omega_e - omega_e_max) < 1e-3) and (throttle_cmd > 0.05)
+            self.Fx_engine_cap_per_wheel = 0.0 if at_redline else Fx_cap
         else:
             self.Fx_engine_cap_per_wheel = float('inf')  # No cap if no engine
 
@@ -1194,44 +1197,58 @@ def draw_rpm_gauge(screen, rpm, rpm_max=6500, x=80, y=80, radius=60):
     """
     Draw a simple RPM needle gauge in the top-left corner.
     rpm_max defines full scale (default 6500 RPM for redline).
+    Always displays 6 divisions with labels positioned on top of the arc.
     """
     # Gauge background (circle)
     pygame.draw.circle(screen, (60, 60, 60), (x, y), radius)
     pygame.draw.circle(screen, (200, 200, 200), (x, y), radius, 2)
     
+    # Calculate gauge parameters based on rpm_max
+    # Round rpm_max up to nearest 1000 for clean scale
+    rpm_max_display = int((rpm_max + 999) / 1000) * 1000
+    
+    # Always show 6 divisions (0 to 5)
+    num_divisions = 6
+    rpm_increment = rpm_max_display / (num_divisions - 1)  # Divide evenly across scale
+    
     # Gauge ticks and labels
-    for i in range(0, 7):  # 0 to 6500 in 1000 RPM increments
-        angle_deg = 180 + (i * 30)  # 180 to 0 degrees (half circle)
+    for i in range(0, num_divisions):
+        rpm_value = i * rpm_increment
+        # Map RPM linearly across 180 degrees (180 to 0 degrees, half circle)
+        rpm_ratio = i / (num_divisions - 1)  # 0 to 1
+        angle_deg = 180 - (rpm_ratio * 180)  # 180 at 0 RPM, 0 at max RPM
         angle_rad = math.radians(angle_deg)
         
         # Outer tick
         x1 = x + (radius - 10) * math.cos(angle_rad)
-        y1 = y + (radius - 10) * math.sin(angle_rad)
+        y1 = y - (radius - 10) * math.sin(angle_rad)
         
         # Inner tick
         x2 = x + (radius - 5) * math.cos(angle_rad)
-        y2 = y + (radius - 5) * math.sin(angle_rad)
+        y2 = y - (radius - 5) * math.sin(angle_rad)
         
         pygame.draw.line(screen, (200, 200, 200), (x1, y1), (x2, y2), 2)
         
-        # Label (every 1000 RPM)
-        label_x = x + (radius - 25) * math.cos(angle_rad)
-        label_y = y + (radius - 25) * math.sin(angle_rad)
+        # Label positioned on TOP of the arc (outside and above)
+        label_x = x + (radius + 15) * math.cos(angle_rad)
+        label_y = y - (radius + 15) * math.sin(angle_rad)
         font_small = pygame.font.Font(None, 20)
-        text = font_small.render(f"{i}k", True, (200, 200, 200))
+        label_value = int(rpm_value / 1000)  # Convert to thousands
+        text = font_small.render(f"{label_value}k", True, (200, 200, 200))
         screen.blit(text, (label_x - 8, label_y - 8))
     
     # Needle (red if near redline)
-    rpm_ratio = min(1.0, rpm / rpm_max)
-    needle_angle_deg = 180 + (rpm_ratio * 180)  # 180 to 0 degrees
+    rpm_ratio = min(1.0, rpm / rpm_max_display) if rpm_max_display > 0 else 0
+    needle_angle_deg = 180 - (rpm_ratio * 180)  # 180 to 0 degrees
     needle_angle_rad = math.radians(needle_angle_deg)
     
     needle_length = radius - 15
     needle_x = x + needle_length * math.cos(needle_angle_rad)
-    needle_y = y + needle_length * math.sin(needle_angle_rad)
+    needle_y = y - needle_length * math.sin(needle_angle_rad)
     
-    # Needle color: yellow/orange if > 5500 RPM, green otherwise
-    needle_color = (255, 100, 0) if rpm > 5500 else (100, 200, 100)
+    # Needle color: yellow/orange if > 85% of redline, green otherwise
+    redline_threshold = rpm_max * 0.85
+    needle_color = (255, 100, 0) if rpm > redline_threshold else (100, 200, 100)
     pygame.draw.line(screen, needle_color, (x, y), (needle_x, needle_y), 3)
     
     # Center hub
@@ -1357,8 +1374,6 @@ def main():
         wheel_radius=tire_config.get('wheel_radius', 0.10),
         dimensions=tuple(tire_config['dimensions']),
         tire_mass=tire_config['mass'],
-        max_forward_speed=tire_config['max_forward_speed'],
-        max_backward_speed=tire_config['max_backward_speed'],
         max_drive_force=tire_config['max_drive_force'],
         max_brake_force=tire_config.get('max_brake_force', 1800),
         cornering_stiffness=tire_config.get('cornering_stiffness', 8000.0),
