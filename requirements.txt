@@ -1,2 +1,6 @@
 # Install the WebSocket dependency from PyPI.
 websockets
+scipy
+numpy
+Box2D==2.3.10
+pygame
