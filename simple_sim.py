@@ -9,6 +9,7 @@ Enhanced with proper tire physics: slip angle, slip ratio, friction ellipse
 import pygame
 from pygame.locals import *
 from Box2D import b2World, b2Vec2, b2ContactListener
+import pygame.gfxdraw
 import math
 import json
 import os
@@ -88,8 +89,11 @@ class SimpleEngine:
         eta: drivetrain efficiency 0..1
         """
         
-        # 1) Throttle/manifold lag (first-order)
-        du = (throttle_cmd - self.u_eff) / max(1e-4, self.cfg.tau_throttle)
+        # 1) Asymmetric throttle lag: faster decay when closing (lift-off feel)
+        tau_on = self.cfg.tau_throttle  # e.g., 0.10 s (opening lag)
+        tau_off = getattr(self.cfg, "tau_throttle_off", 0.05)  # e.g., 0.05 s (closing lag)
+        tau = tau_off if throttle_cmd < self.u_eff else tau_on
+        du = (throttle_cmd - self.u_eff) / max(1e-4, tau)
         self.u_eff += dt * du
         self.u_eff = clamp(self.u_eff, 0.0, 1.0)
 
@@ -101,32 +105,37 @@ class SimpleEngine:
         # 3) Demanded torque from air charge
         T_cmd = self.u_eff * T_wot
 
-        # 4) Internal losses
-        T_loss = self.cfg.T_loss_visc * self.omega_e + self.cfg.T_loss_coulomb
-
-        # 5) Torque slew limit
+        # 4) Slew T_e toward T_cmd (unchanged)
         dT = T_cmd - self.T_e
         max_step = self.cfg.dT_dt_limit * dt if self.cfg.dT_dt_limit > 0 else abs(dT)
         self.T_e += clamp(dT, -max_step, max_step)
         
-        # 6) Engine dynamics with load reflected through fixed ratio
-        # Move losses to the load side so torque can ramp up without immediately canceling
-        # axle_torque is the load opposing the engine (from tire friction/resistance)
-        # Negative axle_torque means tires are trying to drag engine back (braking)
-        # Positive axle_torque means tires need torque from engine (acceleration)
-        T_load = axle_torque / max(1e-6, G * max(1e-3, eta)) + T_loss
+        # 5) Load side: base losses + engine overrun when off-throttle
+        # Base viscous + Coulomb losses (always present)
+        T_loss_base = self.cfg.T_loss_visc * self.omega_e + self.cfg.T_loss_coulomb
+        
+        # Engine overrun (braking) when throttle closed but RPM above idle
+        # Models: intake manifold vacuum + pumping losses
+        T_over = 0.0
+        omega_min = 2 * math.pi * self.cfg.rpm_idle / 60.0
+        if throttle_cmd < 0.05 and self.omega_e > omega_min:
+            k_over = getattr(self.cfg, "T_over_visc", 0.04)  # N·m·s/rad
+            b_over = getattr(self.cfg, "T_over_const", 0.0)   # N·m
+            T_over = k_over * self.omega_e + b_over
+        
+        # Total load: axle resistance + base losses + overrun
+        T_load = axle_torque / max(1e-6, G * max(1e-3, eta)) + T_loss_base + T_over
         domega = (max(0.0, self.T_e) - T_load) / max(1e-6, self.cfg.J_e)
         
-        # Apply RPM change, but maintain minimum idle speed
-        omega_min = 2 * math.pi * self.cfg.rpm_idle / 60.0
+        # 6) Apply RPM change with smart idle clamping
+        # Only pin to idle if nearly stopped and throttle off and minimal axle load
         omega_max = 2 * math.pi * self.cfg.rpm_redline / 60.0
         new_omega = self.omega_e + dt * domega
         
-        # If below idle and throttle is off, hold at idle; otherwise allow natural dynamics
-        if new_omega < omega_min and throttle_cmd < 0.1:
-            self.omega_e = omega_min  # Hold at idle when coasting below idle
+        if new_omega < omega_min and throttle_cmd < 0.05 and abs(axle_torque) < 1.0:
+            self.omega_e = omega_min  # Hold at idle when nearly stopped, throttle off, no load
         else:
-            self.omega_e = clamp(new_omega, omega_min, omega_max)  # Allow acceleration, clamp to redline
+            self.omega_e = clamp(new_omega, omega_min, omega_max)
 
         return self.T_e  # crank torque available to driveline
 
@@ -491,23 +500,16 @@ def map_driver_inputs(throttle_01: float, brake_01: float,
 def apply_damping(body, drag_coefficient: float, angular_damping_factor: float, 
                   time_step: float):
     """
-    Apply aerodynamic and rotational damping for stability at speed.
-    drag_coefficient: applied as -drag_coeff * speed (linear drag model)
+    Apply rotational damping for stability at speed.
+    Note: Linear drag is now applied once in main loop using quadratic aero model.
+    drag_coefficient: deprecated (kept for compatibility)
     angular_damping_factor: directly dampens angular velocity
     """
     if body is None or time_step <= 0:
         return
     
-    # Linear damping (aero drag)
-    vel = body.linearVelocity
-    speed = math.sqrt(vel.x**2 + vel.y**2)
-    if speed > EPS:
-        # Drag force opposite to motion: F = -drag_coeff * speed * vel_normalized
-        drag_force_x = -drag_coefficient * speed * vel.x
-        drag_force_y = -drag_coefficient * speed * vel.y
-        body.ApplyForceToCenter((drag_force_x, drag_force_y), True)
-    
     # Angular damping (rotational friction)
+    # Linear drag is now handled once per frame in main loop (quadratic model)
     if angular_damping_factor > 0:
         body.angularVelocity *= (1.0 - angular_damping_factor * time_step)
 
@@ -602,6 +604,17 @@ class TDTire(object):
         self.last_normal = 0.0     # Last normal load [N]
         self.last_F_rr = 0.0       # Last rolling resistance [N]
         self.last_F_corner = 0.0   # Last cornering resistance (slip work) [N]
+        
+        # Skid mark line tracking (connects consecutive skid points)
+        self.last_skid_pos = None  # (x, y) world position of last skid, or None
+        
+        # Per-tire skid marks: list of (start_x, start_y, end_x, end_y, intensity) for this tire only
+        self.skid_marks = []
+        
+        # Assign color to this tire (RL, RR, FL, FR = red, green, blue, yellow)
+        tire_colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)]  # RGBA tuples
+        # Get tire index from position in parent car's tire list (will be set by car)
+        self.skid_color = (100, 100, 100)  # Default gray until car sets it
 
         self.body = world.CreateDynamicBody(position=position)
         self.body.CreatePolygonFixture(box=dimensions, density=1.0)
@@ -1053,12 +1066,8 @@ class TDCar(object):
         v = self.body.linearVelocity
         v_long_car = v.x * fwd.x + v.y * fwd.y
         
-        # Max forward speed
-        max_v = max(t.max_forward_speed for t in self.tires)
-        if v_long_car > max_v:
-            # Trim forward component smoothly
-            excess = v_long_car - max_v
-            self.body.linearVelocity -= excess * fwd
+        # Let physics set terminal velocity naturally (power = losses balance)
+        # No hard max_forward_speed clamp; Vmax comes from engine power limited by aero/rolling/corner losses
         
         # No reverse creep (prevent backward motion)
         if v_long_car < 0:
@@ -1138,6 +1147,48 @@ class ContactListener(b2ContactListener):
 # ============================================================================
 # UI / Gauge Drawing Helpers
 # ============================================================================
+
+def draw_thick_line(surface, color, start_pos, end_pos, width):
+    """
+    Draw a thick line as a filled polygon to avoid pygame line drawing artifacts.
+    This creates a continuous filled polygon connecting two points.
+    
+    Args:
+        surface: pygame surface to draw on
+        color: RGBA color tuple
+        start_pos: (x1, y1) tuple
+        end_pos: (x2, y2) tuple
+        width: line thickness in pixels
+    """
+    x1, y1 = start_pos
+    x2, y2 = end_pos
+    
+    # Calculate the perpendicular vector
+    dx = x2 - x1
+    dy = y2 - y1
+    dist = math.sqrt(dx*dx + dy*dy)
+    
+    if dist < 1e-6:  # Degenerate line (start == end)
+        return
+    
+    # Normalize perpendicular vector
+    px = -dy / dist
+    py = dx / dist
+    
+    # Scale by half width
+    px *= width / 2.0
+    py *= width / 2.0
+    
+    # Create rectangle vertices (forms a solid filled rectangle)
+    vertices = [
+        (int(x1 + px), int(y1 + py)),
+        (int(x2 + px), int(y2 + py)),
+        (int(x2 - px), int(y2 - py)),
+        (int(x1 - px), int(y1 - py)),
+    ]
+    
+    if len(vertices) >= 3:
+        pygame.gfxdraw.filled_polygon(surface, vertices, color)
 
 def draw_rpm_gauge(screen, rpm, rpm_max=6500, x=80, y=80, radius=60):
     """
@@ -1356,17 +1407,20 @@ def main():
     drag_start_camera = (0, 0)
     follow_car = True  # Auto-follow car until user pans manually
     
-    # Skid marks system
-    skid_config = config.get('skid_marks', {'enabled': False})
-    skid_marks_enabled = skid_config.get('enabled', True)
+    # Skid marks system (always enabled, always draws lines)
+    skid_config = config.get('skid_marks', {})
     skid_mark_width = skid_config.get('mark_width', 0.12)
     max_marks = skid_config.get('max_marks', 5000)
     min_intensity = skid_config.get('min_intensity', 0.1)
     fade_rate = skid_config.get('fade_rate', 0.002)
     skid_color = tuple(skid_config.get('color', [40, 40, 40]))
     
-    # Skid marks storage: list of (x, y, intensity) tuples
-    skid_marks = []
+    # Create a persistent surface for all skid marks (persists across frames)
+    skid_surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+    
+    # Frame counter for skid mark collection (every 5 frames)
+    skid_collection_frame = 0
+    SKID_COLLECTION_INTERVAL = 5
     
     running = True
     while running:
@@ -1419,39 +1473,60 @@ def main():
         car.update(pressed_keys, TARGET_FPS, TIME_STEP, brake_config)
         
         # Apply aerodynamic and rotational damping for stability
-        drag_coeff = friction_config.get('drag_coefficient', 0.3)
+        # Apply quadratic aerodynamic drag (single model, no double-counting)
+        # Replaces old linear drag for realistic aero behavior
+        # F_drag = -0.5 * rho * CdA * v^2 (opposing motion direction)
         angular_damp = friction_config.get('angular_damping_factor', 0.1)
-        
+
         v = car.body.linearVelocity
         speed = math.sqrt(v.x**2 + v.y**2)
         if speed > EPS:
-            # Linear drag (aero)
-            Fd = (-drag_coeff * speed) * v
-            car.body.ApplyForceToCenter((Fd.x, Fd.y), True)
+            # Quadratic drag: realistic aero behavior
+            rho = 1.2  # Air density [kg/m³]
+            CdA = 0.18  # Drag area [m²] (small kart estimate)
+            Fd_mag = 0.5 * rho * CdA * speed * speed
+            # Direction: opposite to velocity
+            Fd_x = -Fd_mag * v.x / speed
+            Fd_y = -Fd_mag * v.y / speed
+            car.body.ApplyForceToCenter((Fd_x, Fd_y), True)
         
         # Angular damping (rotational friction)
         if angular_damp > 0:
             car.body.angularVelocity *= (1.0 - angular_damp * TIME_STEP)
         
-        # Track skid marks from tires
-        if skid_marks_enabled:
-            for tire in car.tires:
-                if tire.skid_intensity > min_intensity:
-                    # Record skid mark at tire position with intensity
-                    pos = tire.body.position
-                    skid_marks.append((pos.x, pos.y, tire.skid_intensity))
-            
-            # Limit total skid marks to prevent memory issues
-            if len(skid_marks) > max_marks:
-                skid_marks = skid_marks[-max_marks:]
-            
-            # Fade existing skid marks
-            new_marks = []
-            for x, y, inten in skid_marks:
+        # Fade per-tire skid marks
+        for tire in car.tires:
+            tire_marks_faded = []
+            for start_x, start_y, end_x, end_y, inten in tire.skid_marks:
                 inten = max(0.0, inten - fade_rate)
-                if inten > 0.01:
-                    new_marks.append((x, y, inten))
-            skid_marks = new_marks
+                if inten > 0.01:  # Keep marks above this threshold
+                    tire_marks_faded.append((start_x, start_y, end_x, end_y, inten))
+            tire.skid_marks = tire_marks_faded
+        
+        # Track skid marks from tires (line-based: always enabled, always lines)
+        # Only collect skid marks every 5 frames to reduce frequency
+        if skid_collection_frame == 0:
+            for tire in car.tires:
+                current_pos = tire.body.position
+                
+                if tire.is_skidding and tire.skid_intensity > min_intensity:
+                    # Currently skidding: create or extend skid line
+                    if tire.last_skid_pos is None:
+                        # Start new skid line at current position
+                        tire.last_skid_pos = (current_pos.x, current_pos.y)
+                    else:
+                        # Draw line from last skid point to current position
+                        last_x, last_y = tire.last_skid_pos
+                        # Store line as segment in per-tire array: (start_x, start_y, end_x, end_y, intensity)
+                        tire.skid_marks.append((last_x, last_y, current_pos.x, current_pos.y, tire.skid_intensity))
+                        # Update last skid position for next frame
+                        tire.last_skid_pos = (current_pos.x, current_pos.y)
+                else:
+                    # Not skidding: stop tracking skid line for this tire
+                    tire.last_skid_pos = None
+        
+        # Increment frame counter for skid collection
+        skid_collection_frame = (skid_collection_frame + 1) % SKID_COLLECTION_INTERVAL
         
         # Update physics
         world.Step(TIME_STEP, vel_iters, pos_iters)
@@ -1502,30 +1577,32 @@ def main():
                 vertices_screen = [(v[0] - camera_x, v[1] - camera_y) for v in vertices]
                 pygame.draw.polygon(screen, (60, 50, 40), vertices_screen)
         
-        # Draw skid marks
-        if skid_marks_enabled and len(skid_marks) > 0:
-            mark_radius = int(skid_mark_width * zoom / 2)
-            if mark_radius < 1:
-                mark_radius = 1
-            
-            for mark_x, mark_y, intensity in skid_marks:
-                # Convert world coordinates to screen coordinates
-                screen_x = int(mark_x * zoom - camera_x)
-                screen_y = int(mark_y * zoom - camera_y)
-                
-                # Only draw if on screen (with margin)
-                if -20 < screen_x < SCREEN_WIDTH + 20 and -20 < screen_y < SCREEN_HEIGHT + 20:
-                    # Calculate alpha based on intensity
-                    alpha = int(255 * intensity)
-                    if alpha > 255:
-                        alpha = 255
-                    
-                    # Create a surface with per-pixel alpha for the mark
-                    mark_surf = pygame.Surface((mark_radius * 2 + 2, mark_radius * 2 + 2), pygame.SRCALPHA)
-                    mark_color = (*skid_color, alpha)
-                    pygame.draw.circle(mark_surf, mark_color, (mark_radius + 1, mark_radius + 1), mark_radius)
-                    screen.blit(mark_surf, (screen_x - mark_radius - 1, screen_y - mark_radius - 1))
+        # Draw skid marks (line segments connecting consecutive skid points)
+        # Clear the skid surface each frame (fading happens through intensity values)
+        skid_surface.fill((0, 0, 0, 0))  # Transparent black
         
+        # Draw per-tire skid marks separately to avoid mixing marks from different wheels
+        for tire in car.tires:
+            if len(tire.skid_marks) > 0:
+                line_width = max(1, int(skid_mark_width * zoom))
+                
+                for start_x, start_y, end_x, end_y, intensity in tire.skid_marks:
+                    # Convert world coordinates to screen coordinates
+                    screen_x1 = int(start_x * zoom - camera_x)
+                    screen_y1 = int(start_y * zoom - camera_y)
+                    screen_x2 = int(end_x * zoom - camera_x)
+                    screen_y2 = int(end_y * zoom - camera_y)
+                    
+                    # Calculate alpha for this segment
+                    alpha = int(intensity * 255)
+                    line_color = (0, 0, 0, alpha)
+                    
+                    # If this segment has the same intensity, add to polyline; otherwise draw and start new
+                    draw_thick_line(skid_surface, line_color, (screen_x1, screen_y1), (screen_x2, screen_y2), line_width)
+    
+        # Blit the persistent skid surface onto the main screen
+        screen.blit(skid_surface, (0, 0))
+
         # Draw car body
         vertices = [(car.body.transform * v) * zoom for v in car.body.fixtures[0].shape.vertices]
         vertices_screen = [(v[0] - camera_x, v[1] - camera_y) for v in vertices]
