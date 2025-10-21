@@ -156,6 +156,77 @@ class SimpleEngine:
         return self.T_e  # crank torque available to driveline
 
 
+# ============================================================================
+# Engine Synthesis from Displacement (CC) and Engine Class
+# ============================================================================
+
+@dataclass
+class EngineCCSpec:
+    """Engine specification from displacement and class."""
+    displacement_cc: float
+    engine_class: str          # "4T_utility", "4T_kart", "2T_enduro", "2T_race"
+    rpm_idle: float
+    rpm_redline: float
+
+
+# Typical specific power [kW/cc] and peak-power rpm fractions per class
+_ENGINE_CLASS = {
+    "4T_utility": {"kw_per_cc": 0.030, "rpm_peakP_frac": 0.75},  # e.g., 200cc -> ~6 kW (~8 hp)
+    "4T_kart":    {"kw_per_cc": 0.045, "rpm_peakP_frac": 0.75},  # e.g., 206cc -> ~9.3 kW (~12.5 hp)
+    "2T_enduro":  {"kw_per_cc": 0.080, "rpm_peakP_frac": 0.85},  # e.g., 125cc -> ~10 kW (~13 hp)
+    "2T_race":    {"kw_per_cc": 0.150, "rpm_peakP_frac": 0.90},  # e.g., 125cc -> ~18.8 kW (~25 hp)
+}
+
+
+def synthesize_torque_curve_from_cc(spec: EngineCCSpec):
+    """
+    Build a WOT torque curve [(rpm, Nm), ...] from displacement and engine class.
+    Produces a plausible bell-shaped torque and ensures torque ~ 0 at redline.
+    
+    Args:
+        spec: EngineCCSpec with displacement_cc, engine_class, rpm_idle, rpm_redline
+    
+    Returns:
+        (curve, Pmax_kW): list of (rpm, torque_Nm) pairs and peak power in kW
+    """
+    cc = spec.displacement_cc
+    cls = _ENGINE_CLASS.get(spec.engine_class, _ENGINE_CLASS["4T_kart"])
+    Pmax_kW = cls["kw_per_cc"] * cc
+    rpm_idle = spec.rpm_idle
+    rpm_red = spec.rpm_redline
+    rpm_peakP = max(rpm_idle * 1.2, cls["rpm_peakP_frac"] * rpm_red)
+
+    # Put peak torque somewhat below peak power (typical)
+    rpm_peakT = 0.7 * rpm_peakP
+
+    # Convert power at peak power to torque: T = 9549 * P[kW] / rpm
+    T_at_peakP = 9549.0 * Pmax_kW / max(1000.0, rpm_peakP)  # [Nm]
+
+    # Assume torque at peak torque is ~15% higher than torque at peak power
+    T_peak = 1.15 * T_at_peakP
+
+    # Build a simple 6-knot curve:
+    # idle, mid (rising), peak torque, peak power, near-redline, redline=0
+    rpm0 = rpm_idle
+    rpm1 = 0.5 * (rpm_idle + rpm_peakT)
+    rpm2 = rpm_peakT
+    rpm3 = rpm_peakP
+    rpm4 = 0.9 * rpm_red
+    rpm5 = rpm_red
+
+    # Torques at knots (bell-ish); small torque at idle; fade to ~0 at redline
+    T0 = 0.15 * T_peak
+    T1 = 0.6 * T_peak
+    T2 = T_peak
+    T3 = T_at_peakP
+    T4 = 0.5 * T_at_peakP
+    T5 = 0.0
+
+    curve = [(int(rpm0), T0), (int(rpm1), T1), (int(rpm2), T2),
+             (int(rpm3), T3), (int(rpm4), T4), (int(rpm5), T5)]
+    return curve, Pmax_kW
+
+
 def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
 
@@ -505,12 +576,27 @@ def skid_intensity(alpha: float, kappa: float,
     return clamp(max(a, k), 0.0, 1.0)
 
 
-def map_driver_inputs(throttle_01: float, brake_01: float,
-                      Fx_drive_max: float, Fx_brake_max: float) -> float:
-    """Map throttle/brake to driver force request. Brake takes priority."""
-    if brake_01 >= throttle_01 and brake_01 > 0:
+def map_driver_inputs(throttle_01: float,
+                      brake_01: float,
+                      Fx_brake_max: float) -> float:
+    """
+    Returns driver_Fx_request (N) used only for BRAKING.
+    Acceleration is handled by throttle->kappa_target elsewhere,
+    so we return 0 for accel to avoid double-limiting.
+
+    - throttle_01, brake_01 in [0..1]
+    - Fx_brake_max is the absolute max braking force per wheel (N)
+    - Fx_drive_max is ignored (deprecated for accel)
+    """
+    throttle_01 = max(0.0, min(1.0, throttle_01))
+    brake_01    = max(0.0, min(1.0, brake_01))
+
+    if brake_01 > throttle_01:
+        # braking request (negative Fx)
         return - brake_01 * Fx_brake_max
-    return throttle_01 * Fx_drive_max
+    # acceleration path: retire force request, return 0 (handled via kappa_target)
+    return 0.0
+
 
 # ============================================================================
 # Configuration Loading
@@ -539,7 +625,6 @@ class TDTire(object):
 
     def __init__(self, car, 
                  wheel_radius=0.10,
-                 max_drive_force=600,
                  max_brake_force=1800,
                  cornering_stiffness=8000.0,
                  longitudinal_stiffness=12000.0,
@@ -561,7 +646,6 @@ class TDTire(object):
         # Tire physical parameters
         self.wheel_radius = wheel_radius
         self.default_traction = default_traction
-        self.max_drive_force = max_drive_force
         self.max_brake_force = max_brake_force
         
         # Slip curve parameters
@@ -638,7 +722,6 @@ class TDTire(object):
         # Convert to force request
         self.driver_Fx_request = map_driver_inputs(
             throttle, brake, 
-            self.max_drive_force, 
             self.max_brake_force
         )
         self.raw_driver_Fx_request = self.driver_Fx_request # Store original request
@@ -1344,6 +1427,22 @@ def main():
     
     engine_params = vehicle_config.get('engine', {})
     if engine_params.get('enabled', False):
+        # Try to synthesize torque curve from displacement if provided
+        torque_curve_rpm = engine_params.get('torque_curve_rpm', None)
+        if "displacement_cc" in engine_params and "engine_class" in engine_params:
+            spec = EngineCCSpec(
+                displacement_cc=engine_params["displacement_cc"],
+                engine_class=engine_params.get("engine_class", "4T_kart"),
+                rpm_idle=engine_params.get("rpm_idle", 1200.0),
+                rpm_redline=engine_params.get("rpm_redline", 6500.0),
+            )
+            torque_curve_rpm, Pmax_kW = synthesize_torque_curve_from_cc(spec)
+            print(f"[Engine] Synthesized {engine_params['displacement_cc']:.0f}cc {engine_params['engine_class']}: "
+                  f"{Pmax_kW:.1f} kW ({Pmax_kW*1.341:.1f} hp)")
+        elif torque_curve_rpm is None:
+            # Default fallback
+            torque_curve_rpm = [(1500, 10), (3000, 16), (4500, 18), (6000, 15)]
+        
         engine_cfg = EngineCfg(
             J_e=engine_params.get('J_e', 0.08),
             tau_throttle=engine_params.get('tau_throttle', 0.1),
@@ -1352,7 +1451,7 @@ def main():
             T_loss_coulomb=engine_params.get('T_loss_coulomb', 0.8),
             rpm_idle=engine_params.get('rpm_idle', 1200.0),
             rpm_redline=engine_params.get('rpm_redline', 6500.0),
-            torque_curve_rpm=engine_params.get('torque_curve_rpm', [(1500, 10), (3000, 16), (4500, 18), (6000, 15)])
+            torque_curve_rpm=torque_curve_rpm
         )
     
     # Create the car with config parameters
@@ -1374,7 +1473,6 @@ def main():
         wheel_radius=tire_config.get('wheel_radius', 0.10),
         dimensions=tuple(tire_config['dimensions']),
         tire_mass=tire_config['mass'],
-        max_drive_force=tire_config['max_drive_force'],
         max_brake_force=tire_config.get('max_brake_force', 1800),
         cornering_stiffness=tire_config.get('cornering_stiffness', 8000.0),
         longitudinal_stiffness=tire_config.get('longitudinal_stiffness', 12000.0),

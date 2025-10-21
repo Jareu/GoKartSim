@@ -29,8 +29,8 @@
     "tires": {
       "dimensions": [0.12, 0.2],
       "mass": 3.0,
-      "wheel_radius": 0.1,
-      "max_drive_force": 1200,
+      "wheel_radius": 0.135,
+      "max_drive_force": 5000,
       "max_brake_force": 10000,
       "cornering_stiffness": 7500.0,
       "longitudinal_stiffness": 9500.0,
@@ -56,11 +56,8 @@
     },
     "engine": {
       "enabled": true,
-      "J_e": 0.08,
-      "tau_throttle": 0.1,
-      "dT_dt_limit": 400.0,
-      "T_loss_visc": 0.02,
-      "T_loss_coulomb": 0.8,
+      "displacement_cc": 250,
+      "engine_class": "4T_kart",
       "rpm_idle": 1200,
       "rpm_redline": 14800,
       "torque_curve_rpm": [
@@ -69,6 +66,11 @@
         [4500, 18],
         [6000, 15]
       ],
+      "J_e": 0.08,
+      "tau_throttle": 0.1,
+      "dT_dt_limit": 400.0,
+      "T_loss_visc": 0.02,
+      "T_loss_coulomb": 0.8,
       "gear_ratio": 11.0,
       "drivetrain_eta": 0.95,
       "wheel_radius": 0.135
