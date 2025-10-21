@@ -232,6 +232,20 @@ def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
 
 
+def smoothstep(edge0: float, edge1: float, x: float) -> float:
+    """
+    Smooth step function: 0 at edge0, 1 at edge1, smooth curve in between.
+    Maps [edge0, edge1] → [0, 1] with smooth Hermite curve.
+    """
+    if x <= edge0:
+        return 0.0
+    if x >= edge1:
+        return 1.0
+    # Hermite smoothstep: 3*t^2 - 2*t^3
+    t = (x - edge0) / (edge1 - edge0)
+    return t * t * (3.0 - 2.0 * t)
+
+
 def compute_tire_state(vel_world, fwd_world, right_world, wheel_radius: float,
                        wheel_omega: float|None = None,
                        v_ref: float = 3.0,
@@ -488,7 +502,8 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
     # Speed softening for lateral stiffness: at low speeds, reduce Ca to allow longitudinal force build
     # soft ≈ 0 at standstill → 1 above ~1 m/s; prevents alpha blow-up from locking all grip to lateral
     soft = st.speed / max(EPS, st.speed + 1.0)
-    Ca_eff = Ca * soft
+    alpha_eff = st.alpha * soft
+    Ca_eff = Ca * soft      # replaces st.alpha in pure_lateral(...)
     Fy_pure = pure_lateral(st.alpha, muN, Ca=Ca_eff)
     
     # (Patch C, improved) Map driver command directly to target slip ratio via pedal fraction
@@ -499,7 +514,12 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
         kappa_peak = 0.12  # slip_ratio_peak
         
         if brake_frac > throttle_frac:  # Braking priority
-            kappa_target = -brake_frac * kappa_peak
+            # Convert per-tire scaled driver_Fx_request into a target kappa magnitude
+            # using stiffness Cx and muN: Fx ≈ Cx*kappa (pre-sat)
+            if driver_Fx_request < 0.0:
+                kappa_target = -min(0.99, abs(driver_Fx_request) / max(EPS, Cx))
+            else:
+                kappa_target = -brake_frac * kappa_peak
         else:  # Acceleration
             # (Fix 2A) Add throttle headroom to avoid constant saturation
             # At full throttle, request ~50% of peak slip to leave lateral budget
@@ -514,6 +534,11 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
         if abs(st.v_long) < 0.05 and kappa_target < 0.0:
             # Limit max backward force to 50N, and only when actually moving forward
             Fx_req = -min(abs(Fx_req), 50.0) * (st.v_long > 0.0)
+        
+        # Guard: non-driven wheels don't create drive slip
+        # If both throttle and brake are zero, force Fx_req to zero
+        if throttle_frac <= 0.0 and brake_frac <= 0.0:
+            Fx_req = 0.0
     else:
         Fx_from_slip = pure_longitudinal(st.kappa, muN, Cx=Cx)
         Fx_req = clamp(driver_Fx_request, -abs(Fx_from_slip), abs(Fx_from_slip))
@@ -540,10 +565,10 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
     # (Patch 3) Gentle throttle-understeer bias: favor longitudinal when driving
     ellip_x_eff = ellip_x
     ellip_y_eff = ellip_y
-    #if throttle_frac > brake_frac and throttle_frac > 0.1:
-        # Gentle longitudinal bias when driving
-    #    ellip_x_eff = ellip_x * (1.0 + 0.05 * throttle_frac)   # +5% at full throttle
-    #    ellip_y_eff = ellip_y * (1.0 - 0.025 * throttle_frac)  # -2.5% at full throttle
+
+    if throttle_frac > brake_frac and throttle_frac > 0.1:
+        ellip_x_eff = ellip_x * (1.0 + 0.05 * throttle_frac)
+        ellip_y_eff = ellip_y * (1.0 - 0.03 * throttle_frac)
     
     # Engine cap: limit acceleration force by available power
     if Fx_engine_cap is not None and throttle_frac > brake_frac and Fx_req > 0.0:
@@ -829,7 +854,7 @@ class TDTire(object):
         # Cornering power loss: only above ~1.0 m/s and capped to fraction of μN
         # Prevents unrealistic over-damping during low-speed maneuvers
         if speed > 1.0 and tire_state and self.slip_angle_peak > 0:
-            k_corner = 0.008  # Cornering loss coefficient [s/m]; tunable 0.005–0.02
+            k_corner = 0.005  # Cornering loss coefficient [s/m]; tunable 0.005–0.02
             scale = abs(tire_state.alpha) / self.slip_angle_peak
             scale = min(2.0, scale)  # Cap scale to avoid huge growth past peak
             
@@ -1048,17 +1073,19 @@ class TDCar(object):
                               front_bias * 0.5, front_bias * 0.5]
             
             for tire, scale in zip(self.tires, throttle_scales):
-                # Only scale when accelerating (Fx_request > 0)
+                # ALWAYS gate throttle_frac by the axle bias, regardless of driver_Fx_request
+                # (fixes front tires driving in RWD kart)
+                old_throttle_frac = tire.throttle_frac
+                if scale == 0.0:
+                    # Force front tires' throttle to 0 when front_bias==0 (RWD kart)
+                    tire.throttle_frac = 0.0
+                else:
+                    # Preserve 0..1 feel per axle by scaling throttle fraction
+                    tire.throttle_frac = min(1.0, old_throttle_frac * scale * 2.0)
+                
+                # Also scale driver_Fx_request when accelerating only
                 if tire.driver_Fx_request > 0.0:
-                    old_throttle_frac = tire.throttle_frac
                     tire.driver_Fx_request *= scale
-                    # (Fix 5) Ensure fronts never request drive
-                    # When scale is 0 (front tires with rear-bias), zero throttle_frac
-                    if scale == 0.0:
-                        tire.throttle_frac = 0.0
-                    else:
-                        # Preserve 0..1 feel per axle by scaling throttle fraction
-                        tire.throttle_frac = min(1.0, old_throttle_frac * scale * 2.0)
 
         # Step engine with clean load reflection (clean separation principle)
         if self.engine is not None:
@@ -1069,7 +1096,7 @@ class TDCar(object):
             yaw_rate = self.body.angularVelocity  # rad/s
             r_w = self.wheel_radius
             track = self.track
-            K_scrub = 2.0  # N·m·s/rad (tunable, start 1..5)
+            K_scrub = 1.0  # N·m·s/rad (reduced from 2.0 for more lively low-speed feel)
             
             # Wheel speed mismatch implied by yaw (outer vs inner)
             delta_omega_wheels = (track / max(1e-6, 2.0 * r_w)) * abs(yaw_rate)  # 1/s
@@ -1081,11 +1108,17 @@ class TDCar(object):
             sign_ax = -1.0 if v_long >= 0.0 else 1.0  # Resist current rotation
             
             # Torque (N·m) that opposes axle rotation
-            self.last_T_scrub_axle = sign_ax * K_scrub * delta_omega_wheels
+            T_scrub = sign_ax * K_scrub * delta_omega_wheels
             
-            # Gate scrub at very low speed (no yaw = no scrub)
-            if abs(v_long) < 0.5:
-                self.last_T_scrub_axle = 0.0
+            # Smooth speed gate: ramp from 0→1 between 0.5 and 2.0 m/s
+            # This keeps low-speed maneuvering lively without gluing the kart
+            speed_gate = smoothstep(0.5, 2.0, abs(v_long))
+            T_scrub = T_scrub * speed_gate
+            
+            # Cap torque magnitude to prevent excessive engine braking
+            T_scrub = clamp(T_scrub, -10.0, 10.0)  # N·m cap (tunable)
+            
+            self.last_T_scrub_axle = T_scrub
 
             # Sum all resistive torques from rear tires (0=RL, 1=RR)
             T_axle_resist = 0.0
@@ -1104,6 +1137,14 @@ class TDCar(object):
                 # Simplified aero: rho=1.2 kg/m³, CdA=0.18 m² (small kart)
                 F_aero = 0.5 * 1.2 * 0.18 * speed * speed
                 T_axle_resist += F_aero * self.wheel_radius
+                
+                # Also apply aerodynamic drag force to chassis
+                # Reflect drag force to engine (already done above as T_axle_resist)
+                # ALSO apply force to chassis for realistic coasting decel and Vmax
+                vx, vy = v.x, v.y
+                inv = 1.0 / max(EPS, speed)
+                Fx_air, Fy_air = -F_aero * vx * inv, -F_aero * vy * inv
+                self.body.ApplyForce((Fx_air, Fy_air), self.body.worldCenter, True)
             
             # Driver throttle from rear tires (same for both)
             throttle_cmd = max((self.tires[0].throttle_frac, self.tires[1].throttle_frac)) if any(t.throttle_frac > 0 for t in self.tires[:2]) else 0.0
@@ -1125,11 +1166,11 @@ class TDCar(object):
             omega_e_max = 2 * math.pi * self.engine.cfg.rpm_redline / 60.0
             omega_e_lock = self.gear_ratio * omega_axle
             
-            # Hard lock when we are at/over redline and throttle is on (Part A)
+            # Hard clamp at redline when under throttle to prevent over-revving
             if omega_e_lock >= omega_e_max and throttle_cmd > 0.05:
                 self.engine.omega_e = omega_e_max
             else:
-                # Soft compliance away from redline (keeps things stable at low speed)
+                # Soft blending away from redline for stability (prevents lock-up jitter at low speeds)
                 blend = 0.8
                 self.engine.omega_e = max(
                     omega_e_min,
@@ -1137,12 +1178,12 @@ class TDCar(object):
                 )
             
             # Calculate available drive force cap from engine torque (after kinematic lock)
+            # This limits acceleration when at redline to prevent runaway
             T_axle_avail = self.engine.T_e * self.gear_ratio * self.driveline_eta
             num_driven = 2  # rear-drive only
             Fx_cap = max(0.0, T_axle_avail / max(EPS, num_driven * self.wheel_radius))
             
-            # Hard stop at redline under power (Part D): if locked engine speed corresponds to redline,
-            # don't allow any additional positive Fx to be applied that frame
+            # At redline under power: set Fx cap to 0 to prevent additional acceleration
             at_redline = (abs(self.engine.omega_e - omega_e_max) < 1e-3) and (throttle_cmd > 0.05)
             self.Fx_engine_cap_per_wheel = 0.0 if at_redline else Fx_cap
         else:
