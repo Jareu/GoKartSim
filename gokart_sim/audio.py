@@ -31,8 +31,8 @@ class EngineAudio:
     def __init__(
         self,
         audio_file: str = "sound/engine.wav",
-        min_rpm: float = 0.0,
-        max_rpm: float = 12000.0,
+        min_rpm: float = 1200.0,
+        max_rpm: float = 16000.0,
         idle_rpm: float = 1000.0,
         redline_rpm: float = 10000.0,
         base_speed: float = 1.0,

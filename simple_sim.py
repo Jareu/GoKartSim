@@ -501,10 +501,10 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
     
     # Speed softening for lateral stiffness: at low speeds, reduce Ca to allow longitudinal force build
     # soft ≈ 0 at standstill → 1 above ~1 m/s; prevents alpha blow-up from locking all grip to lateral
-    soft = st.speed / max(EPS, st.speed + 1.0)
+    soft      = st.speed / (st.speed + 1.0)
     alpha_eff = st.alpha * soft
-    Ca_eff = Ca * soft      # replaces st.alpha in pure_lateral(...)
-    Fy_pure = pure_lateral(st.alpha, muN, Ca=Ca_eff)
+    Ca_eff    = Ca * soft
+    Fy_pure   = pure_lateral(alpha_eff, muN, Ca=Ca_eff)
     
     # (Patch C, improved) Map driver command directly to target slip ratio via pedal fraction
     # This ensures full braking force even after brake distribution scaling
@@ -833,44 +833,36 @@ class TDTire(object):
         
         # Get current speed to gate losses (prevent over-damping at standstill)
         v = self.body.linearVelocity
-        speed = math.sqrt(v.x**2 + v.y**2)
+        speed = math.hypot(v.x, v.y)
         
-        # Rolling resistance: only above ~0.5 m/s to avoid static drag
-        # Includes alpha-dependent component (increases with slip angle)
+        # ---- Rolling resistance (speed-gated) ----
         if speed > 0.5:
-            Crr0 = 0.012  # Base rolling resistance coefficient
-            k_rr_alpha = 0.10  # Alpha-dependent contribution
-            alpha = self.tire_state.alpha if tire_state else 0.0
-            # Rolling resistance increases slightly with slip angle (tire deformation)
-            F_rr = (Crr0 + k_rr_alpha * alpha * alpha) * max(0.0, normal_load)
-            
-            # Apply opposite to forward direction
+            # Base Crr with small amplification from slip angle
+            Crr0       = 0.012         # 0.008..0.015 typical
+            k_rr_alpha = 0.10          # small; scales with alpha^2
+            N          = max(0.0, normal_load)
+            alpha      = self.tire_state.alpha if tire_state else 0.0
+
+            F_rr = (Crr0 + k_rr_alpha * (alpha * alpha)) * N
+
             fwd = self.body.GetWorldVector((0, 1))
             self.body.ApplyForce((-F_rr * fwd.x, -F_rr * fwd.y), self.body.worldCenter, True)
             self.last_F_rr = F_rr
         else:
             self.last_F_rr = 0.0
-        
-        # Cornering power loss: only above ~1.0 m/s and capped to fraction of μN
-        # Prevents unrealistic over-damping during low-speed maneuvers
+
+        # ---- Cornering "power loss" (speed-gated + capped) ----
         if speed > 1.0 and tire_state and self.slip_angle_peak > 0:
-            k_corner = 0.005  # Cornering loss coefficient [s/m]; tunable 0.005–0.02
-            scale = abs(tire_state.alpha) / self.slip_angle_peak
-            scale = min(2.0, scale)  # Cap scale to avoid huge growth past peak
-            
-            # Cornering drag force (uncapped)
+            k_corner = 0.006  # 0.004..0.010 typical; start modest
+            scale    = min(2.0, abs(tire_state.alpha) / self.slip_angle_peak)
             F_corner_raw = k_corner * abs(forces.Fy) * scale
-            
-            # Cap to a small fraction of μN to avoid over-damping
-            # Use default_traction as proxy for friction (typical ~1.0)
-            muN = self.default_traction * normal_load
-            F_corner = min(F_corner_raw, 0.1 * max(0.0, muN))
-            
-            # Apply opposite to tire forward direction (creates longitudinal drag)
+
+            # cap to ≤10% of available friction to avoid over-damping small engines
+            muN  = self.default_traction * max(0.0, normal_load)
+            F_corner = min(F_corner_raw, 0.10 * muN)
+
             fwd = self.body.GetWorldVector((0, 1))
             self.body.ApplyForce((-F_corner * fwd.x, -F_corner * fwd.y), self.body.worldCenter, True)
-            
-            # Store for engine load reflection
             self.last_F_corner = F_corner
         else:
             self.last_F_corner = 0.0
@@ -1083,42 +1075,29 @@ class TDCar(object):
                     # Preserve 0..1 feel per axle by scaling throttle fraction
                     tire.throttle_frac = min(1.0, old_throttle_frac * scale * 2.0)
                 
-                # Also scale driver_Fx_request when accelerating only
-                if tire.driver_Fx_request > 0.0:
-                    tire.driver_Fx_request *= scale
-
         # Step engine with clean load reflection (clean separation principle)
         if self.engine is not None:
-            # Compute solid-axle scrub torque from differential slip
-            # In slow turns, inside wheel slower than outside, creating internal slip
-            
-            # Yaw-rate based approach: torque that opposes axle rotation proportional to yaw rate
-            yaw_rate = self.body.angularVelocity  # rad/s
-            r_w = self.wheel_radius
-            track = self.track
-            K_scrub = 1.0  # N·m·s/rad (reduced from 2.0 for more lively low-speed feel)
-            
-            # Wheel speed mismatch implied by yaw (outer vs inner)
-            delta_omega_wheels = (track / max(1e-6, 2.0 * r_w)) * abs(yaw_rate)  # 1/s
-            
-            # Axle rotation sign from chassis forward speed
+            # Solid-axle scrub torque (oppose axle rotation; proportional to yaw-rate; gated by speed)
+            yaw_rate = self.body.angularVelocity    # rad/s
+            track    = self.track
+            r_w      = self.wheel_radius
+
+            # implied wheel-speed mismatch due to yaw
+            delta_omega = (track / max(1e-6, 2.0 * r_w)) * abs(yaw_rate)  # [1/s]
+
+            # sign: oppose current axle rotation (use forward speed sign)
             fwd = self.body.GetWorldVector((0, 1))
-            v = self.body.linearVelocity
+            v   = self.body.linearVelocity
             v_long = v.x * fwd.x + v.y * fwd.y
-            sign_ax = -1.0 if v_long >= 0.0 else 1.0  # Resist current rotation
-            
-            # Torque (N·m) that opposes axle rotation
-            T_scrub = sign_ax * K_scrub * delta_omega_wheels
-            
-            # Smooth speed gate: ramp from 0→1 between 0.5 and 2.0 m/s
-            # This keeps low-speed maneuvering lively without gluing the kart
-            speed_gate = smoothstep(0.5, 2.0, abs(v_long))
-            T_scrub = T_scrub * speed_gate
-            
-            # Cap torque magnitude to prevent excessive engine braking
-            T_scrub = clamp(T_scrub, -10.0, 10.0)  # N·m cap (tunable)
-            
-            self.last_T_scrub_axle = T_scrub
+            sign_ax = -1.0 if v_long >= 0.0 else 1.0
+
+            # gate with speed (no scrub when crawling), then clamp magnitude
+            K_scrub       = 1.0                         # N·m·s/rad; start small (1..3)
+            gate          = smoothstep(0.5, 2.0, abs(v_long))  # 0→1 ramp
+            T_scrub_axle  = sign_ax * K_scrub * delta_omega * gate
+            T_scrub_axle  = max(-10.0, min(10.0, T_scrub_axle))  # clamp to ±10 N·m (tune)
+
+            self.last_T_scrub_axle = T_scrub_axle
 
             # Sum all resistive torques from rear tires (0=RL, 1=RR)
             T_axle_resist = 0.0
@@ -1132,7 +1111,7 @@ class TDCar(object):
             
             # Optionally add aerodynamic drag reflected to axle
             v = self.body.linearVelocity
-            speed = math.sqrt(v.x**2 + v.y**2)
+            speed = math.hypot(v.x, v.y)
             if speed > 1e-3:
                 # Simplified aero: rho=1.2 kg/m³, CdA=0.18 m² (small kart)
                 F_aero = 0.5 * 1.2 * 0.18 * speed * speed
@@ -1704,7 +1683,7 @@ def main():
         angular_damp = friction_config.get('angular_damping_factor', 0.1)
 
         v = car.body.linearVelocity
-        speed = math.sqrt(v.x**2 + v.y**2)
+        speed = math.hypot(v.x, v.y)
         if speed > EPS:
             # Quadratic drag: realistic aero behavior
             rho = 1.2  # Air density [kg/m³]
