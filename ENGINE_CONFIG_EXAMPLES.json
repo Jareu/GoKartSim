@@ -1,0 +1,194 @@
+{
+  "engines": {
+    "comments": "Copy any of these 'engine' blocks into vehicle_config.json to try different engine types",
+
+    "stock_206cc_4T_kart": {
+      "description": "Stock clone racing kart - realistic baseline",
+      "displaced_cc": 206,
+      "engine_class": "4T_kart",
+      "expected_power": "9.3 kW (12.5 hp)",
+      "config": {
+        "enabled": true,
+        "displacement_cc": 206,
+        "engine_class": "4T_kart",
+        "rpm_idle": 1200,
+        "rpm_redline": 6500,
+        "J_e": 0.08,
+        "tau_throttle": 0.1,
+        "dT_dt_limit": 400.0,
+        "T_loss_visc": 0.02,
+        "T_loss_coulomb": 0.8,
+        "gear_ratio": 11.0,
+        "drivetrain_eta": 0.95,
+        "wheel_radius": 0.135
+      }
+    },
+
+    "big_block_390cc_4T_kart": {
+      "description": "Briggs & Stratton big-block style - nearly double the power",
+      "displaced_cc": 390,
+      "engine_class": "4T_kart",
+      "expected_power": "17.5 kW (23.5 hp)",
+      "config": {
+        "enabled": true,
+        "displacement_cc": 390,
+        "engine_class": "4T_kart",
+        "rpm_idle": 1200,
+        "rpm_redline": 6500,
+        "J_e": 0.12,
+        "tau_throttle": 0.1,
+        "dT_dt_limit": 400.0,
+        "T_loss_visc": 0.03,
+        "T_loss_coulomb": 1.2,
+        "gear_ratio": 11.0,
+        "drivetrain_eta": 0.95,
+        "wheel_radius": 0.135
+      }
+    },
+
+    "screaming_125cc_2T_race": {
+      "description": "High-strung 125cc 2-stroke - high RPM, aggressive power delivery",
+      "displaced_cc": 125,
+      "engine_class": "2T_race",
+      "expected_power": "18.8 kW (25.1 hp)",
+      "note": "High RPM, peaks late (~9000 RPM)",
+      "config": {
+        "enabled": true,
+        "displacement_cc": 125,
+        "engine_class": "2T_race",
+        "rpm_idle": 1800,
+        "rpm_redline": 14000,
+        "J_e": 0.05,
+        "tau_throttle": 0.08,
+        "dT_dt_limit": 2000.0,
+        "T_loss_visc": 0.01,
+        "T_loss_coulomb": 0.5,
+        "gear_ratio": 13.0,
+        "drivetrain_eta": 0.97,
+        "wheel_radius": 0.135
+      }
+    },
+
+    "enduro_250cc_2T": {
+      "description": "Medium-displacement 2-stroke enduro engine - balanced power and response",
+      "displaced_cc": 250,
+      "engine_class": "2T_enduro",
+      "expected_power": "20.0 kW (26.8 hp)",
+      "config": {
+        "enabled": true,
+        "displacement_cc": 250,
+        "engine_class": "2T_enduro",
+        "rpm_idle": 1500,
+        "rpm_redline": 10000,
+        "J_e": 0.07,
+        "tau_throttle": 0.09,
+        "dT_dt_limit": 1200.0,
+        "T_loss_visc": 0.015,
+        "T_loss_coulomb": 0.7,
+        "gear_ratio": 12.0,
+        "drivetrain_eta": 0.96,
+        "wheel_radius": 0.135
+      }
+    },
+
+    "weak_100cc_4T_utility": {
+      "description": "Weak utility engine - for realistic low-power kart simulation",
+      "displaced_cc": 100,
+      "engine_class": "4T_utility",
+      "expected_power": "3.0 kW (4.0 hp)",
+      "config": {
+        "enabled": true,
+        "displacement_cc": 100,
+        "engine_class": "4T_utility",
+        "rpm_idle": 1000,
+        "rpm_redline": 5000,
+        "J_e": 0.04,
+        "tau_throttle": 0.12,
+        "dT_dt_limit": 200.0,
+        "T_loss_visc": 0.025,
+        "T_loss_coulomb": 0.5,
+        "gear_ratio": 9.0,
+        "drivetrain_eta": 0.93,
+        "wheel_radius": 0.135
+      }
+    },
+
+    "medium_200cc_4T_kart": {
+      "description": "Medium 4-stroke kart - between stock and big-block",
+      "displaced_cc": 200,
+      "engine_class": "4T_kart",
+      "expected_power": "9.0 kW (12.1 hp)",
+      "config": {
+        "enabled": true,
+        "displacement_cc": 200,
+        "engine_class": "4T_kart",
+        "rpm_idle": 1200,
+        "rpm_redline": 6500,
+        "J_e": 0.08,
+        "tau_throttle": 0.1,
+        "dT_dt_limit": 400.0,
+        "T_loss_visc": 0.02,
+        "T_loss_coulomb": 0.75,
+        "gear_ratio": 11.0,
+        "drivetrain_eta": 0.95,
+        "wheel_radius": 0.135
+      }
+    },
+
+    "supercharged_125cc_2T_enduro": {
+      "description": "Mod-style 125cc enduro with aggressive tuning",
+      "displaced_cc": 125,
+      "engine_class": "2T_enduro",
+      "expected_power": "10.0 kW (13.4 hp)",
+      "config": {
+        "enabled": true,
+        "displacement_cc": 125,
+        "engine_class": "2T_enduro",
+        "rpm_idle": 1600,
+        "rpm_redline": 9000,
+        "J_e": 0.06,
+        "tau_throttle": 0.08,
+        "dT_dt_limit": 1000.0,
+        "T_loss_visc": 0.012,
+        "T_loss_coulomb": 0.6,
+        "gear_ratio": 12.5,
+        "drivetrain_eta": 0.96,
+        "wheel_radius": 0.135
+      }
+    }
+  },
+
+  "how_to_use": {
+    "step_1": "Choose one of the engine configs above that matches your desired power level",
+    "step_2": "Replace the entire 'engine' object in vehicle_config.json with the chosen config",
+    "step_3": "The torque curve will be synthesized automatically when the simulator starts",
+    "step_4": "Run the simulator - you'll see '[Engine] Synthesized XXcc XXX: Y.Y kW' in the console"
+  },
+
+  "power_comparison": {
+    "comment": "Visual comparison of all engines",
+    "3kW": "100cc 4T utility (lawn mower class)",
+    "9kW": "206cc 4T kart (stock), 200cc 4T kart (medium)",
+    "10kW": "125cc 2T enduro",
+    "17kW": "390cc 4T kart (big-block)",
+    "18kW": "125cc 2T race (screaming)",
+    "20kW": "250cc 2T enduro"
+  },
+
+  "tuning_tips": {
+    "faster": "Increase displacement_cc or switch to higher-performance engine_class",
+    "slower": "Decrease displacement_cc or use 4T_utility class",
+    "higher_rpm": "Increase rpm_redline (2T engines go higher: 10k-14k)",
+    "more_torque": "Increase displacement_cc or use 2-stroke class",
+    "sharper_response": "Reduce tau_throttle (0.08 vs 0.10)",
+    "less_drag": "Reduce T_loss_visc and T_loss_coulomb"
+  },
+
+  "notes": {
+    "backward_compatible": "You can still use hand-authored 'torque_curve_rpm' if desired",
+    "synthesis_automatic": "As long as displacement_cc and engine_class are present, synthesis runs automatically",
+    "no_max_drive_force": "DO NOT try to control power by changing max_drive_force - that no longer works!",
+    "gear_ratio": "Higher ratio = more torque multiplication, slower top speed (default 11.0)",
+    "efficiency": "Higher drivetrain_eta (0.95+) = less power loss to friction"
+  }
+}

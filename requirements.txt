@@ -1,6 +1,8 @@
 # Install the WebSocket dependency from PyPI.
 websockets
-scipy
+pydub
 numpy
 Box2D==2.3.10
 pygame
+sounddevice
+soundfile

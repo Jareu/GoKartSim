@@ -7,13 +7,15 @@ import json
 import logging
 import math
 import time
+from typing import Optional, Union
 
 import websockets
 from pychrono import core as chrono
 from .config import KartConfig, rad
-from .drivers import ConstantDriver, SineWaveDriver, IdleDriver
+from .drivers import IdleDriver, DriverFactory, DriverKind
 from .track import build_oval_path
 from .world import add_track_visual, build_ground, spawn_karts
+from .vehicles import VehicleKind
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,17 @@ class SimServer:
         - All fields optional; absent ones remain unchanged.
     """
 
-    def __init__(self, host="127.0.0.1", port=8765, fps=60, step=1e-3, num_karts=4, scenario=None):
+    def __init__(
+        self,
+        host="127.0.0.1",
+        port=8765,
+        fps=60,
+        step=1e-3,
+        num_karts=4,
+        scenario=None,
+        vehicle_kind: Union[str, VehicleKind] = VehicleKind.SIMPLE,
+        driver_kind: Union[str, DriverKind] = DriverKind.SIMPLE,
+    ):
         self.host = host
         self.port = port
         self.target_fps = fps
@@ -40,6 +52,8 @@ class SimServer:
         self.step = step
         self.num_karts = num_karts
         self.scenario = scenario or {}
+        self.vehicle_kind = VehicleKind.from_value(vehicle_kind)
+        self.driver_kind = DriverKind.from_value(driver_kind)
         self.allow_client_control = True
         self.scenario_duration = float(self.scenario.get("duration_s", 0.0)) if self.scenario else 0.0
         if self.scenario:
@@ -51,20 +65,47 @@ class SimServer:
             self.dt_broadcast = 1.0 / max(1e-9, stream_hz)
             control_cfg = self.scenario.get("control", {})
             self.allow_client_control = bool(control_cfg.get("client_enabled", True))
-        self.ai_driver_params = {
+            vehicle_cfg = self.scenario.get("vehicle")
+            if vehicle_cfg:
+                if isinstance(vehicle_cfg, dict):
+                    kind_value = vehicle_cfg.get("kind")
+                else:
+                    kind_value = vehicle_cfg
+                if kind_value is not None:
+                    self.vehicle_kind = VehicleKind.from_value(kind_value)
+        self.driver_params = {
             "amplitude_deg": 20.0,
             "frequency_hz": 0.5,
             "throttle": 0.5,
             "brake": 0.0,
+            "steer_deg": 0.0,
         }
+        if self.driver_kind == DriverKind.SIMPLE:
+            self.driver_params["throttle"] = 0.1
         if self.scenario:
             kart_cfg = self.scenario.get("kart", {})
             if kart_cfg:
-                self.ai_driver_params["throttle"] = kart_cfg.get("throttle", 0.5)
+                self.driver_params["throttle"] = kart_cfg.get("throttle", self.driver_params["throttle"])
                 steer_cfg = kart_cfg.get("steer", {}) or {}
                 if steer_cfg.get("kind") == "sine":
-                    self.ai_driver_params["amplitude_deg"] = steer_cfg.get("amplitude_deg", 20.0)
-                    self.ai_driver_params["frequency_hz"] = steer_cfg.get("freq_hz", 0.5)
+                    self.driver_kind = DriverKind.SINE
+                    self.driver_params["amplitude_deg"] = steer_cfg.get(
+                        "amplitude_deg", self.driver_params["amplitude_deg"]
+                    )
+                    self.driver_params["frequency_hz"] = steer_cfg.get(
+                        "freq_hz", self.driver_params["frequency_hz"]
+                    )
+            driver_cfg = self.scenario.get("driver")
+            if driver_cfg:
+                if isinstance(driver_cfg, dict):
+                    kind_value = driver_cfg.get("kind")
+                    if kind_value is not None:
+                        self.driver_kind = DriverKind.from_value(kind_value)
+                    params = driver_cfg.get("params", {})
+                    if isinstance(params, dict):
+                        self.driver_params.update(params)
+                else:
+                    self.driver_kind = DriverKind.from_value(driver_cfg)
         init_cfg = self.scenario.get("init", {}) if self.scenario else {}
         self.scenario_push_speed = init_cfg.get("push_off_speed", 0.0)
         self.scenario_push_duration = init_cfg.get("push_off_duration", 0.3)
@@ -76,6 +117,8 @@ class SimServer:
         self._stop = asyncio.Event()
         self.offline_mode = False
         self._offline_end_time = None
+        self.diag_period = 0.2
+        self._last_diag_broadcast = -self.diag_period
 
         # per-kart input overrides (None = use AI)
         self.inputs_override = {}  # id -> {"throttle":..., "brake":..., "steer":...}
@@ -95,24 +138,46 @@ class SimServer:
         self.ground = build_ground(self.sys, cfg)
         self.path, self.track_pts = build_oval_path(chrono.ChVector3d(0, 0, 0), straight_len=40.0, radius=12.0)
         add_track_visual(self.ground, self.path)
-        self.karts = spawn_karts(self.sys, cfg, n=self.num_karts, spacing=2.8)
+        self.karts = spawn_karts(
+            self.sys,
+            cfg,
+            n=self.num_karts,
+            spacing=2.8,
+            vehicle_kind=self.vehicle_kind,
+            driver_kind=self.driver_kind,
+        )
         self.drivers = [self._default_driver() for _ in self.karts]
         self._apply_human_driver_modes()
         # reset overrides
         self.inputs_override.clear()
-        # Ensure overrides exist for human-controlled karts
+        # Ensure overrides exist for human-controlled karts with 0.0 values to disable AI
         for kart in self.karts:
             if kart.name in self.human_controlled:
-                self.inputs_override.setdefault(kart.name, {"throttle": None, "brake": None, "steer": None})
+                self.inputs_override.setdefault(kart.name, {"throttle": 0.0, "brake": 0.0, "steer": 0.0})
+        self._last_diag_broadcast = self.sys.GetChTime() - self.diag_period
 
     def _default_driver(self):
-        params = self.ai_driver_params
-        return SineWaveDriver(
-            amplitude_deg=params.get("amplitude_deg", 20.0),
-            frequency_hz=params.get("frequency_hz", 0.5),
-            throttle=params.get("throttle", 0.5),
-            brake=params.get("brake", 0.0),
-        )
+        params = self.driver_params
+        if self.driver_kind == DriverKind.SINE:
+            return DriverFactory.create(
+                DriverKind.SINE,
+                amplitude_deg=params.get("amplitude_deg", 20.0),
+                frequency_hz=params.get("frequency_hz", 0.5),
+                throttle=params.get("throttle", 0.5),
+                brake=params.get("brake", 0.0),
+            )
+        if self.driver_kind == DriverKind.CONSTANT:
+            return DriverFactory.create(
+                DriverKind.CONSTANT,
+                throttle=params.get("throttle", 0.5),
+                steer_deg=params.get("steer_deg", 0.0),
+                brake=params.get("brake", 0.0),
+            )
+        if self.driver_kind == DriverKind.SIMPLE:
+            return DriverFactory.create(self.driver_kind, throttle=params.get("throttle", 0.1))
+        if self.driver_kind in (DriverKind.IDLE, DriverKind.NULL):
+            return DriverFactory.create(self.driver_kind)
+        return DriverFactory.create(self.driver_kind, throttle=params.get("throttle", 0.5))
 
     def _apply_human_driver_modes(self):
         if not self.allow_client_control:
@@ -122,8 +187,7 @@ class SimServer:
                 if not isinstance(self.drivers[idx], IdleDriver):
                     self.drivers[idx] = IdleDriver()
             else:
-                if not isinstance(self.drivers[idx], SineWaveDriver):
-                    self.drivers[idx] = self._default_driver()
+                self.drivers[idx] = self._default_driver()
 
     def _apply_push_off(self, sim_t):
         if self.scenario_push_speed <= 0.0 or sim_t > self.scenario_push_duration:
@@ -312,7 +376,8 @@ class SimServer:
                 else:
                     logger.info("Kart %s claimed in playable mode", kart_id)
                 self.human_controlled.add(kart_id)
-                self.inputs_override.setdefault(kart_id, {"throttle": None, "brake": None, "steer": None})
+                # Initialize with 0.0 values to ensure AI driver is effectively disabled
+                self.inputs_override.setdefault(kart_id, {"throttle": 0.0, "brake": 0.0, "steer": 0.0})
             else:
                 if kart_id in self.human_controlled:
                     logger.info("Kart %s released back to viewing mode", kart_id)
@@ -400,6 +465,8 @@ class SimServer:
 
                 # one broadcast per frame
                 await self._broadcast_json(self._state_payload())
+                sim_time = self.sys.GetChTime()
+                await self._maybe_broadcast_diagnostics(sim_time)
                 if self.scenario_duration and self.sys.GetChTime() >= self.scenario_duration:
                     logger.info("Scenario duration reached (%.2fs); stopping simulation", self.scenario_duration)
                     self.stop()
@@ -413,3 +480,32 @@ class SimServer:
 
     def stop(self):
         self._stop.set()
+
+    async def _maybe_broadcast_diagnostics(self, sim_time: float) -> None:
+        if sim_time - self._last_diag_broadcast < self.diag_period - 1e-9:
+            return
+        payload = self._first_kart_diag_payload(sim_time)
+        if payload is None:
+            return
+        self._last_diag_broadcast = sim_time
+        await self._broadcast_json(payload)
+
+    def _first_kart_diag_payload(self, sim_time: float) -> Optional[dict]:
+        if not self.karts:
+            return None
+        kart = self.karts[0]
+        try:
+            diag = kart.get_diagnostics()
+        except Exception:  # pragma: no cover - safeguard diagnostic hook
+            logger.exception("Failed to gather diagnostics for %s", kart.name)
+            return None
+        if not diag:
+            return None
+        return {
+            "type": "diag",
+            "t": sim_time,
+            "kart": {
+                "id": kart.name,
+                "metrics": diag,
+            },
+        }

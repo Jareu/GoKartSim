@@ -11,6 +11,7 @@ class KartConfig:
     chassis_height = 0.25
     chassis_mass = 70.0
     yaw_inertia = None  # optional override
+    axle_drag_coefficient = 0.5
 
     wheel_radius = 0.17
     wheel_width = 0.10
@@ -25,6 +26,12 @@ class KartConfig:
 
     max_steer_rad = math.radians(30)
     cg_front_frac = 0.5  # distance from CG to front axle as fraction of wheelbase
+    cg_height = 0.3  # center of gravity height above ground (m)
+    
+    # Aerodynamic drag: F_drag = 0.5 * rho * Cd * A * v^2
+    # For typical go-kart: Cd ~1.0, frontal area ~0.6 m^2, rho=1.225 kg/m^3
+    # Combined: drag_coefficient = 0.5 * 1.225 * 1.0 * 0.6 = 0.3675
+    aero_drag_coefficient = 0.37  # N/(m/s)^2
 
     torque_curve = [
         (0.0, 30.0),

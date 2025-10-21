@@ -6,18 +6,19 @@ import math
 from pychrono import core as chrono
 from .config import KartConfig, make_nsc_material, plinterp
 from .tires import SimpleTireModel, WheelTireBinding
+from .vehicles import Vehicle
 
-class GoKart:
+
+class GoKart(Vehicle):
     def __init__(
         self,
         sys,
         cfg: KartConfig,
         name="kart",
-        pose=chrono.ChCoordsysd(chrono.ChVector3d(0, 0, 0.25)),
+        pose=None,
     ):
-        self.sys = sys
-        self.cfg = cfg
-        self.name = name
+        pose = pose or chrono.ChCoordsysd(chrono.ChVector3d(0, 0, 0.25))
+        super().__init__(sys=sys, cfg=cfg, name=name, pose=pose)
         self.mat_ground = make_nsc_material(cfg.terrain_mu, cfg.terrain_restitution)
         self.mat_wheel = make_nsc_material(0.01, cfg.terrain_restitution)
 
@@ -83,7 +84,7 @@ class GoKart:
         sys.Add(self.axle)
         frame = chrono.ChFramed()
         frame.SetPos(self.chassis.GetPos() + self.chassis.GetRot().Rotate(axle_pos))
-        frame.SetRot(self.chassis.GetRot() * chrono.QuatFromAngleAxis(math.pi / 2, chrono.ChVector3d(0, 0, 1)))
+        frame.SetRot(self.chassis.GetRot() * chrono.QuatFromAngleAxis(math.pi / 2, chrono.ChVector3d(1, 0, 0)))
         self.axle_rev = chrono.ChLinkLockRevolute()
         self.axle_rev.Initialize(self.axle, self.chassis, frame)
         sys.Add(self.axle_rev)
@@ -123,6 +124,8 @@ class GoKart:
                 v_min=cfg.tire_min_vx,
             ),
             cfg.wheel_radius,
+            is_front=True,
+            is_left=True,
         )
         self.tire_FR = WheelTireBinding(
             self.wheel_FR,
@@ -134,6 +137,8 @@ class GoKart:
                 v_min=cfg.tire_min_vx,
             ),
             cfg.wheel_radius,
+            is_front=True,
+            is_left=False,
         )
         self.tire_RL = WheelTireBinding(
             self.wheel_RL,
@@ -145,6 +150,8 @@ class GoKart:
                 v_min=cfg.tire_min_vx,
             ),
             cfg.wheel_radius,
+            is_front=False,
+            is_left=True,
         )
         self.tire_RR = WheelTireBinding(
             self.wheel_RR,
@@ -156,12 +163,23 @@ class GoKart:
                 v_min=cfg.tire_min_vx,
             ),
             cfg.wheel_radius,
+            is_front=False,
+            is_left=False,
         )
 
         # Inputs (live)
         self.last_throttle = 0.0
         self.last_brake = 0.0
         self.last_steer = 0.0
+        self.last_engine_tau = 0.0
+        self.last_brake_tau = 0.0
+        
+        # Register tire force loads with the system
+        self.load_container = chrono.ChLoadContainer()
+        sys.Add(self.load_container)
+        for tire in [self.tire_FL, self.tire_FR, self.tire_RL, self.tire_RR]:
+            self.load_container.Add(tire.lateral_force_load)
+            self.load_container.Add(tire.aligning_torque_load)
 
     # Builders -------------------------------------------------------------
 
@@ -213,7 +231,7 @@ class GoKart:
         rev = chrono.ChLinkLockRevolute()
         frame = chrono.ChFramed()
         frame.SetPos(parent.GetPos() + parent.GetRot().Rotate(pos_local_parent))
-        frame.SetRot(parent.GetRot() * chrono.QuatFromAngleAxis(math.pi / 2, chrono.ChVector3d(0, 0, 1)))
+        frame.SetRot(parent.GetRot() * chrono.QuatFromAngleAxis(math.pi / 2, chrono.ChVector3d(1, 0, 0)))
         rev.Initialize(child, parent, frame)
         self.sys.Add(rev)
         return rev
@@ -238,13 +256,23 @@ class GoKart:
         omega_axle = self.axle.GetAngVelLocal().y
         w_abs = abs(omega_axle)
         tau_engine = self._engine_tau_from_curve(w_abs)
+        tau_engine -= self.cfg.axle_drag_coefficient * omega_axle
         tau_brake = -math.copysign(self.cfg.max_brake_torque * self.last_brake, omega_axle) if w_abs > 1e-3 else 0.0
         self.engine_fun.SetSetpoint(tau_engine, now)
         self.brake_fun.SetSetpoint(tau_brake, now)
+        self.last_engine_tau = tau_engine
+        self.last_brake_tau = tau_brake
 
     def apply_tire_forces(self, dt):
-        tau = abs(self.engine_fun.GetVal(self.sys.GetChTime()))
+        # Get engine torque with proper sign (don't take abs - we need direction)
+        tau = self.engine_fun.GetVal(self.sys.GetChTime())
         Fx_rear_each = tau / max(1e-6, self.cfg.wheel_radius) / 2.0
+        
+        # Compute CG position for load transfer calculations
+        cg_to_front = self.cfg.wheelbase * self.cfg.cg_front_frac
+        cg_to_rear = self.cfg.wheelbase * (1.0 - self.cfg.cg_front_frac)
+        track_width = (self.cfg.front_track + self.cfg.rear_track) / 2.0
+        
         for binding, fx in (
             (self.tire_FL, 0.0),
             (self.tire_FR, 0.0),
@@ -252,9 +280,9 @@ class GoKart:
             (self.tire_RR, Fx_rear_each),
         ):
             ux, uy = binding.compute_patch_vel_local()
-            Fz = binding.estimate_Fz()
+            Fz = binding.estimate_Fz(self.chassis, cg_to_front, cg_to_rear, track_width, self.cfg.wheelbase, self.cfg.cg_height)
             Fy, Mz = binding.tire.step(dt, ux, uy, Fz, Fx_est=fx)
-            binding.apply(Fy, Mz)
+            binding.apply(Fy, Mz, Fz)
 
     def get_state(self):
         pos = self.chassis.GetPos()
@@ -282,3 +310,51 @@ class GoKart:
                 "steer": self.last_steer,
             },
         }
+
+    def get_diagnostics(self) -> dict:
+        vel = self.chassis.GetPosDt()
+        diag = {
+            "throttle": self.last_throttle,
+            "brake": self.last_brake,
+            "steer_rad": self.last_steer,
+            "speed": vel.Length(),
+            "axle_omega": self.axle.GetAngVelLocal().y,
+            "engine_tau": self.last_engine_tau,
+            "brake_tau": self.last_brake_tau,
+            "pos": {
+                "x": self.chassis.GetPos().x,
+                "y": self.chassis.GetPos().y,
+                "z": self.chassis.GetPos().z,
+            },
+            "tire_forces": {
+                "FL": {
+                    "Fz": self.tire_FL.last_Fz,
+                    "Fy": self.tire_FL.last_Fy,
+                    "Mz": self.tire_FL.last_Mz,
+                    "ux": self.tire_FL.last_patch_vel[0],
+                    "uy": self.tire_FL.last_patch_vel[1],
+                },
+                "FR": {
+                    "Fz": self.tire_FR.last_Fz,
+                    "Fy": self.tire_FR.last_Fy,
+                    "Mz": self.tire_FR.last_Mz,
+                    "ux": self.tire_FR.last_patch_vel[0],
+                    "uy": self.tire_FR.last_patch_vel[1],
+                },
+                "RL": {
+                    "Fz": self.tire_RL.last_Fz,
+                    "Fy": self.tire_RL.last_Fy,
+                    "Mz": self.tire_RL.last_Mz,
+                    "ux": self.tire_RL.last_patch_vel[0],
+                    "uy": self.tire_RL.last_patch_vel[1],
+                },
+                "RR": {
+                    "Fz": self.tire_RR.last_Fz,
+                    "Fy": self.tire_RR.last_Fy,
+                    "Mz": self.tire_RR.last_Mz,
+                    "ux": self.tire_RR.last_patch_vel[0],
+                    "uy": self.tire_RR.last_patch_vel[1],
+                },
+            },
+        }
+        return diag

@@ -1,0 +1,16 @@
+name: single_kart_sine
+duration_s: 10.0
+physics_dt: 0.001
+stream_hz: 100
+num_karts: 1
+kart:
+  throttle: 0.5
+  steer:
+    kind: sine
+    amplitude_deg: 20
+    freq_hz: 0.5
+init:
+  push_off_speed: 0.5
+  push_off_duration: 0.3
+control:
+  client_enabled: false

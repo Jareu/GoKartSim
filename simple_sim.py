@@ -15,6 +15,7 @@ import json
 import os
 from dataclasses import dataclass
 from math import atan2, tanh, sqrt, copysign, log
+from gokart_sim.audio import EngineAudio
 
 EPS = 1e-6
 GRAV = 9.81
@@ -1541,6 +1542,16 @@ def main():
         pneumatic_trail_rear=tire_config.get('pneumatic_trail_rear', 0.02)
     )
     
+    # Initialize engine audio system
+    engine_audio = EngineAudio(
+        audio_file="sound/engine.wav",
+        idle_rpm=engine_cfg.rpm_idle,
+        redline_rpm=engine_cfg.rpm_redline,
+        min_pitch=1.0,
+        max_pitch=4.0,
+    )
+    engine_audio.start()
+    
     # Create ground areas with different traction from config
     ground_bodies = []
     for area in surface_config['ground_areas']:
@@ -1640,6 +1651,10 @@ def main():
         
         # Update car with new tire physics
         car.update(pressed_keys, TARGET_FPS, TIME_STEP, brake_config)
+        
+        # Update engine audio with current RPM
+        current_rpm = car.engine.omega_e * 60.0 / (2 * math.pi)
+        engine_audio.set_rpm(current_rpm)
         
         # Apply aerodynamic and rotational damping for stability
         # Apply quadratic aerodynamic drag (single model, no double-counting)
@@ -1832,6 +1847,8 @@ def main():
         pygame.display.flip()
         clock.tick(TARGET_FPS)
     
+    # Cleanup
+    engine_audio.stop()
     pygame.quit()
 
 

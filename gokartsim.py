@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import signal
 from pathlib import Path
+import logging
 
 try:
     import yaml
@@ -31,6 +32,10 @@ def parse_args() -> argparse.Namespace:
 
 def main():
     args = parse_args()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     scenario = None
     if args.scenario is not None:
         if yaml is None:
@@ -66,4 +71,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
