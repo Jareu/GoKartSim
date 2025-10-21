@@ -1371,6 +1371,62 @@ def draw_speedometer(screen, speed_mps, speed_max=40.0, x=1520, y=80):
     screen.blit(unit_text, (x - panel_width + 28, y + 45))
 
 
+def rotate_point_around_center(point_x, point_y, center_x, center_y, angle_rad):
+    """
+    Rotate a point around a center by angle_rad (counterclockwise positive).
+    
+    Args:
+        point_x, point_y: coordinates of point to rotate
+        center_x, center_y: center of rotation
+        angle_rad: rotation angle in radians (positive = counterclockwise)
+    
+    Returns:
+        (rotated_x, rotated_y)
+    """
+    # Translate to origin
+    px = point_x - center_x
+    py = point_y - center_y
+    
+    # Rotate
+    cos_a = math.cos(angle_rad)
+    sin_a = math.sin(angle_rad)
+    rotated_x = px * cos_a - py * sin_a
+    rotated_y = px * sin_a + py * cos_a
+    
+    # Translate back to center
+    return rotated_x + center_x, rotated_y + center_y
+
+
+def world_to_screen_with_rotation(world_x, world_y, camera_x, camera_y, zoom, 
+                                   screen_center_x, screen_center_y, rotation_angle):
+    """
+    Convert world coordinates to screen coordinates with camera rotation.
+    
+    Args:
+        world_x, world_y: position in world frame
+        camera_x, camera_y: camera position (offset in screen pixels)
+        zoom: pixels per meter
+        screen_center_x, screen_center_y: center of screen for rotation
+        rotation_angle: rotation angle in radians (positive = counterclockwise)
+    
+    Returns:
+        (screen_x, screen_y)
+    """
+    # Convert world to screen without rotation
+    screen_x = world_x * zoom - camera_x
+    screen_y = world_y * zoom - camera_y
+    
+    # Apply rotation around screen center if angle is significant
+    if abs(rotation_angle) > EPS:
+        screen_x, screen_y = rotate_point_around_center(
+            screen_x, screen_y,
+            screen_center_x, screen_center_y,
+            rotation_angle
+        )
+    
+    return screen_x, screen_y
+
+
 def main():
     # Load configuration from JSON
     config = load_config()
@@ -1645,14 +1701,20 @@ def main():
         world.Step(TIME_STEP, vel_iters, pos_iters)
         
         # Update camera to follow car (if enabled)
+        # When following, rotate the view so the kart always faces up
+        camera_rotation = 0.0
         if follow_car:
             car_screen_x = car.body.position.x * zoom
             car_screen_y = car.body.position.y * zoom
             camera_x = car_screen_x - SCREEN_WIDTH / 2
             camera_y = car_screen_y - SCREEN_HEIGHT / 2
+            # Rotate view so car's forward direction points up: negate the car's angle and add 180°
+            camera_rotation = -car.body.angle + math.pi
         
         # Render
         screen.fill((40, 50, 40))  # Dark green background
+        screen_center_x = SCREEN_WIDTH / 2
+        screen_center_y = SCREEN_HEIGHT / 2
         
         # Draw grid for reference
         grid_spacing = display_config['grid_spacing']  # meters
@@ -1662,24 +1724,38 @@ def main():
             start_x = int((camera_x / zoom) / grid_spacing) * grid_spacing
             for i in range(-5, int(SCREEN_WIDTH / grid_pixel_spacing) + 10):
                 world_x = start_x + i * grid_spacing
-                screen_x = world_x * zoom - camera_x
-                if -10 < screen_x < SCREEN_WIDTH + 10:
-                    pygame.draw.line(screen, (50, 60, 50), (screen_x, 0), (screen_x, SCREEN_HEIGHT), 1)
+                screen_x1 = world_to_screen_with_rotation(world_x, -200, camera_x, camera_y, zoom, 
+                                                          screen_center_x, screen_center_y, camera_rotation)[0]
+                screen_y1 = world_to_screen_with_rotation(world_x, -200, camera_x, camera_y, zoom, 
+                                                          screen_center_x, screen_center_y, camera_rotation)[1]
+                screen_x2 = world_to_screen_with_rotation(world_x, 200, camera_x, camera_y, zoom, 
+                                                          screen_center_x, screen_center_y, camera_rotation)[0]
+                screen_y2 = world_to_screen_with_rotation(world_x, 200, camera_x, camera_y, zoom, 
+                                                          screen_center_x, screen_center_y, camera_rotation)[1]
+                pygame.draw.line(screen, (50, 60, 50), (screen_x1, screen_y1), (screen_x2, screen_y2), 1)
             
             # Horizontal lines
             start_y = int((camera_y / zoom) / grid_spacing) * grid_spacing
             for i in range(-5, int(SCREEN_HEIGHT / grid_pixel_spacing) + 10):
                 world_y = start_y + i * grid_spacing
-                screen_y = world_y * zoom - camera_y
-                if -10 < screen_y < SCREEN_HEIGHT + 10:
-                    pygame.draw.line(screen, (50, 60, 50), (0, screen_y), (SCREEN_WIDTH, screen_y), 1)
+                screen_x1 = world_to_screen_with_rotation(-200, world_y, camera_x, camera_y, zoom, 
+                                                          screen_center_x, screen_center_y, camera_rotation)[0]
+                screen_y1 = world_to_screen_with_rotation(-200, world_y, camera_x, camera_y, zoom, 
+                                                          screen_center_x, screen_center_y, camera_rotation)[1]
+                screen_x2 = world_to_screen_with_rotation(200, world_y, camera_x, camera_y, zoom, 
+                                                          screen_center_x, screen_center_y, camera_rotation)[0]
+                screen_y2 = world_to_screen_with_rotation(200, world_y, camera_x, camera_y, zoom, 
+                                                          screen_center_x, screen_center_y, camera_rotation)[1]
+                pygame.draw.line(screen, (50, 60, 50), (screen_x1, screen_y1), (screen_x2, screen_y2), 1)
         
         # Draw boundaries
         boundary_points = [(-200, -200), (-200, 200), (200, 200), (200, -200), (-200, -200)]
         boundary_screen = []
         for x, y in boundary_points:
-            screen_x = (x + boundary.position.x) * zoom - camera_x
-            screen_y = (y + boundary.position.y) * zoom - camera_y
+            screen_x, screen_y = world_to_screen_with_rotation(
+                x + boundary.position.x, y + boundary.position.y,
+                camera_x, camera_y, zoom, screen_center_x, screen_center_y, camera_rotation
+            )
             boundary_screen.append((screen_x, screen_y))
         pygame.draw.lines(screen, (100, 100, 100), False, boundary_screen, 2)
         
@@ -1687,7 +1763,13 @@ def main():
         for body in ground_bodies:
             for fixture in body.fixtures:
                 vertices = [(body.transform * v) * zoom for v in fixture.shape.vertices]
-                vertices_screen = [(v[0] - camera_x, v[1] - camera_y) for v in vertices]
+                vertices_screen = []
+                for v in vertices:
+                    screen_x, screen_y = rotate_point_around_center(
+                        v[0] - camera_x, v[1] - camera_y,
+                        screen_center_x, screen_center_y, camera_rotation
+                    )
+                    vertices_screen.append((screen_x, screen_y))
                 pygame.draw.polygon(screen, (60, 50, 40), vertices_screen)
         
         # Draw skid marks (line segments connecting consecutive skid points)
@@ -1700,17 +1782,21 @@ def main():
                 line_width = max(1, int(skid_mark_width * zoom))
                 
                 for start_x, start_y, end_x, end_y, intensity in tire.skid_marks:
-                    # Convert world coordinates to screen coordinates
-                    screen_x1 = int(start_x * zoom - camera_x)
-                    screen_y1 = int(start_y * zoom - camera_y)
-                    screen_x2 = int(end_x * zoom - camera_x)
-                    screen_y2 = int(end_y * zoom - camera_y)
+                    # Convert world coordinates to screen coordinates with rotation
+                    screen_x1, screen_y1 = world_to_screen_with_rotation(
+                        start_x, start_y, camera_x, camera_y, zoom,
+                        screen_center_x, screen_center_y, camera_rotation
+                    )
+                    screen_x2, screen_y2 = world_to_screen_with_rotation(
+                        end_x, end_y, camera_x, camera_y, zoom,
+                        screen_center_x, screen_center_y, camera_rotation
+                    )
                     
                     # Calculate alpha for this segment
                     alpha = int(intensity * 255)
                     line_color = (0, 0, 0, alpha)
                     
-                    # If this segment has the same intensity, add to polyline; otherwise draw and start new
+                    # Draw line with rotation applied
                     draw_thick_line(skid_surface, line_color, (screen_x1, screen_y1), (screen_x2, screen_y2), line_width)
     
         # Blit the persistent skid surface onto the main screen
@@ -1718,13 +1804,25 @@ def main():
 
         # Draw car body
         vertices = [(car.body.transform * v) * zoom for v in car.body.fixtures[0].shape.vertices]
-        vertices_screen = [(v[0] - camera_x, v[1] - camera_y) for v in vertices]
+        vertices_screen = []
+        for v in vertices:
+            screen_x, screen_y = rotate_point_around_center(
+                v[0] - camera_x, v[1] - camera_y,
+                screen_center_x, screen_center_y, camera_rotation
+            )
+            vertices_screen.append((screen_x, screen_y))
         pygame.draw.polygon(screen, (200, 50, 50), vertices_screen)
         
         # Draw tires
         for tire in car.tires:
             vertices = [(tire.body.transform * v) * zoom for v in tire.body.fixtures[0].shape.vertices]
-            vertices_screen = [(v[0] - camera_x, v[1] - camera_y) for v in vertices]
+            vertices_screen = []
+            for v in vertices:
+                screen_x, screen_y = rotate_point_around_center(
+                    v[0] - camera_x, v[1] - camera_y,
+                    screen_center_x, screen_center_y, camera_rotation
+                )
+                vertices_screen.append((screen_x, screen_y))
             pygame.draw.polygon(screen, (20, 20, 20), vertices_screen)
         
         # Draw gauges
