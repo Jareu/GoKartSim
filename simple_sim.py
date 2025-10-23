@@ -664,7 +664,8 @@ class TDTire(object):
                  dimensions=(0.12, 0.20), 
                  tire_mass=3.0,
                  default_traction=1.0,
-                 position=(0, 0)):
+                 position=(0, 0),
+                 corner_loss_cap_fraction=0.05):
 
         world = car.body.world
         self.car = car  # Store reference for applying aligning torque
@@ -683,6 +684,7 @@ class TDTire(object):
         self.pneumatic_trail0 = pneumatic_trail0
         self.pneumatic_trail_front = pneumatic_trail_front if pneumatic_trail_front is not None else 0.06
         self.pneumatic_trail_rear = pneumatic_trail_rear if pneumatic_trail_rear is not None else 0.02
+        self.corner_loss_cap_fraction = max(0.0, min(0.05, corner_loss_cap_fraction))
         
         # Ellipse bias for combined-slip limiting
         self.ellipse_bias_x = ellipse_bias_x  # >1 favors longitudinal, <1 favors lateral
@@ -865,9 +867,9 @@ class TDTire(object):
             scale    = min(2.0, abs(tire_state.alpha) / self.slip_angle_peak)
             F_corner_raw = k_corner * abs(forces.Fy) * scale
 
-            # cap to ≤10% of available friction to avoid over-damping small engines
             muN  = self.default_traction * max(0.0, normal_load)
-            F_corner = min(F_corner_raw, 0.10 * muN)
+            cap_fraction = self.corner_loss_cap_fraction
+            F_corner = min(F_corner_raw, cap_fraction * muN)
 
             fwd = self.body.GetWorldVector((0, 1))
             self.body.ApplyForce((-F_corner * fwd.x, -F_corner * fwd.y), self.body.worldCenter, True)
@@ -1560,7 +1562,8 @@ def main():
         ellipse_bias_y=tire_config.get('ellipse_bias_y', 1.0),
         pneumatic_trail0=tire_config.get('pneumatic_trail0', 0.06),
         pneumatic_trail_front=tire_config.get('pneumatic_trail_front', 0.06),
-        pneumatic_trail_rear=tire_config.get('pneumatic_trail_rear', 0.02)
+        pneumatic_trail_rear=tire_config.get('pneumatic_trail_rear', 0.02),
+        corner_loss_cap_fraction=tire_config.get('corner_loss_cap_fraction', 0.05)
     )
     
     # Store initial position for reset functionality
