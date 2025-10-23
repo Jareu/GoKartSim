@@ -845,7 +845,8 @@ class TDTire(object):
         self.last_normal = normal_load
         
         # Get current speed to gate losses (prevent over-damping at standstill)
-        v = self.body.linearVelocity
+        chassis = self.car.body
+        v = chassis.linearVelocity
         speed = math.hypot(v.x, v.y)
         
         # ---- Rolling resistance (speed-gated) ----
@@ -858,8 +859,8 @@ class TDTire(object):
 
             F_rr = (Crr0 + k_rr_alpha * (alpha * alpha)) * N
 
-            fwd = self.body.GetWorldVector((0, 1))
-            self.body.ApplyForce((-F_rr * fwd.x, -F_rr * fwd.y), self.body.worldCenter, True)
+            fwd = chassis.GetWorldVector((0, 1))
+            chassis.ApplyForce((-F_rr * fwd.x, -F_rr * fwd.y), chassis.worldCenter, True)
             self.last_F_rr = F_rr
         else:
             self.last_F_rr = 0.0
@@ -874,8 +875,8 @@ class TDTire(object):
             cap_fraction = self.corner_loss_cap_fraction
             F_corner = min(F_corner_raw, cap_fraction * muN)
 
-            fwd = self.body.GetWorldVector((0, 1))
-            self.body.ApplyForce((-F_corner * fwd.x, -F_corner * fwd.y), self.body.worldCenter, True)
+            fwd = chassis.GetWorldVector((0, 1))
+            chassis.ApplyForce((-F_corner * fwd.x, -F_corner * fwd.y), chassis.worldCenter, True)
             self.last_F_corner = F_corner
         else:
             self.last_F_corner = 0.0
