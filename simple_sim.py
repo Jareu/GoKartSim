@@ -574,7 +574,10 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
                 Fx_final *= max(0.0, fade)
         forces = TireForces(Fx_final, Fy)
     else:
-        forces = combine_forces(Fx_req, Fy, muN, ellip_x=ellip_x_eff, ellip_y=ellip_y_eff)
+        Fy_ratio = clamp(Fy / ay, -1.0, 1.0)
+        Fx_cap = ax * sqrt(max(0.0, 1.0 - Fy_ratio * Fy_ratio))
+        Fx_final = clamp(Fx_req, -Fx_cap, Fx_cap)
+        forces = TireForces(Fx_final, Fy)
     
     # (Patch 1) Compute self-aligning moment (pneumatic trail torque)
     Mz = aligning_moment(Fy=forces.Fy, alpha=st.alpha,
