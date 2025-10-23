@@ -1110,17 +1110,12 @@ class TDCar(object):
             # Add solid-axle scrub
             T_axle_resist += self.last_T_scrub_axle
             
-            # Optionally add aerodynamic drag reflected to axle
+            # Aerodynamic drag: apply as force on chassis (engine load comes via tire reactions)
             v = self.body.linearVelocity
             speed = math.hypot(v.x, v.y)
             if speed > 1e-3:
                 # Simplified aero: rho=1.2 kg/m³, CdA=0.18 m² (small kart)
                 F_aero = 0.5 * 1.2 * 0.18 * speed * speed
-                T_axle_resist += F_aero * self.wheel_radius
-                
-                # Also apply aerodynamic drag force to chassis
-                # Reflect drag force to engine (already done above as T_axle_resist)
-                # ALSO apply force to chassis for realistic coasting decel and Vmax
                 vx, vy = v.x, v.y
                 inv = 1.0 / max(EPS, speed)
                 Fx_air, Fy_air = -F_aero * vx * inv, -F_aero * vy * inv
@@ -1685,10 +1680,13 @@ def main():
         
         # Update car with new tire physics
         car.update(pressed_keys, TARGET_FPS, TIME_STEP, brake_config)
+        v = car.body.linearVelocity
+        speed = math.hypot(v.x, v.y)
         
         # Update engine audio with current RPM
         current_rpm = car.engine.omega_e * 60.0 / (2 * math.pi)
-        rev_pitch = (current_rpm - engine_cfg.rpm_idle) / (engine_cfg.rpm_redline - engine_cfg.rpm_idle)
+        rev_pitch = (engine_audio.max_pitch - engine_audio.min_pitch) * (current_rpm - engine_cfg.rpm_idle) / (engine_cfg.rpm_redline - engine_cfg.rpm_idle) + engine_audio.min_pitch
+        
         engine_audio.set_pitch(rev_pitch)
     
         # Update tire screech audio with max tire skid
@@ -1698,27 +1696,10 @@ def main():
             1.0,
         )
 
-        print("Skid level: " + str(round(skid_level,2)))
-
         tire_audio.set_volume(clamp(skid_level, 0.0, 1.0))
         
-        # Apply aerodynamic and rotational damping for stability
-        # Apply quadratic aerodynamic drag (single model, no double-counting)
-        # Replaces old linear drag for realistic aero behavior
-        # F_drag = -0.5 * rho * CdA * v^2 (opposing motion direction)
+        # Apply rotational damping for stability
         angular_damp = friction_config.get('angular_damping_factor', 0.1)
-
-        v = car.body.linearVelocity
-        speed = math.hypot(v.x, v.y)
-        if speed > EPS:
-            # Quadratic drag: realistic aero behavior
-            rho = 1.2  # Air density [kg/m³]
-            CdA = 0.18  # Drag area [m²] (small kart estimate)
-            Fd_mag = 0.5 * rho * CdA * speed * speed
-            # Direction: opposite to velocity
-            Fd_x = -Fd_mag * v.x / speed
-            Fd_y = -Fd_mag * v.y / speed
-            car.body.ApplyForceToCenter((Fd_x, Fd_y), True)
         
         # Angular damping (rotational friction)
         if angular_damp > 0:
