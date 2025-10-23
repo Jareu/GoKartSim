@@ -955,6 +955,7 @@ class TDCar(object):
         self.gear_ratio = gear_ratio
         self.driveline_eta = driveline_eta
         self.Fx_engine_cap_per_wheel = float('inf')  # No cap initially
+        self.last_F_aero = 0.0
         
         # Solid-axle scrub torque from differential slip (steering in slow turns)
         self.last_T_scrub_axle = 0.0
@@ -1151,17 +1152,6 @@ class TDCar(object):
             # Add solid-axle scrub
             T_axle_resist += self.last_T_scrub_axle
             
-            # Aerodynamic drag: apply as force on chassis (engine load comes via tire reactions)
-            v = self.body.linearVelocity
-            speed = math.hypot(v.x, v.y)
-            if speed > 1e-3:
-                # Simplified aero: rho=1.2 kg/m³, CdA=0.18 m² (small kart)
-                F_aero = 0.5 * 1.2 * 0.18 * speed * speed
-                vx, vy = v.x, v.y
-                inv = 1.0 / max(EPS, speed)
-                Fx_air, Fy_air = -F_aero * vx * inv, -F_aero * vy * inv
-                self.body.ApplyForce((Fx_air, Fy_air), self.body.worldCenter, True)
-            
             # Driver throttle from rear tires (same for both)
             throttle_cmd = max((self.tires[0].throttle_frac, self.tires[1].throttle_frac)) if any(t.throttle_frac > 0 for t in self.tires[:2]) else 0.0
             
@@ -1204,6 +1194,19 @@ class TDCar(object):
             self.Fx_engine_cap_per_wheel = 0.0 if at_redline else Fx_cap
         else:
             self.Fx_engine_cap_per_wheel = float('inf')  # No cap if no engine
+        
+        # Aerodynamic drag applied once to chassis; engine sees it via kinematic coupling
+        v = self.body.linearVelocity
+        speed = math.hypot(v.x, v.y)
+        if speed > 1e-3:
+            F_aero = 0.5 * 1.2 * 0.18 * speed * speed
+            vx, vy = v.x, v.y
+            inv = 1.0 / max(EPS, speed)
+            Fx_air, Fy_air = -F_aero * vx * inv, -F_aero * vy * inv
+            self.body.ApplyForce((Fx_air, Fy_air), self.body.worldCenter, True)
+            self.last_F_aero = F_aero
+        else:
+            self.last_F_aero = 0.0
 
         # Let physics set terminal velocity naturally (power = losses balance)
         # No hard max_forward_speed clamp; Vmax comes from engine power limited by aero/rolling/corner losses
