@@ -15,7 +15,7 @@ import json
 import os
 from dataclasses import dataclass
 from math import atan2, tanh, sqrt, copysign, log
-from gokart_sim.audio import EngineAudio
+from gokart_sim.audio import StreamingAudio
 
 EPS = 1e-6
 GRAV = 9.81
@@ -599,7 +599,8 @@ def skid_intensity(alpha: float, kappa: float,
     """Calculate skid intensity for audio/marks."""
     a = max(0.0, abs(alpha) - alpha_peak) / max(EPS, alpha_peak)
     k = max(0.0, abs(kappa) - kappa_peak) / max(EPS, kappa_peak)
-    return clamp(max(a, k), 0.0, 1.0)
+    skid_intensity = clamp(max(a, k), 0.0, 1.0)
+    return skid_intensity
 
 
 def map_driver_inputs(throttle_01: float,
@@ -1562,16 +1563,25 @@ def main():
         pneumatic_trail_rear=tire_config.get('pneumatic_trail_rear', 0.02)
     )
     
+    # Store initial position for reset functionality
+    initial_position = tuple(body_config['initial_position'])
+    
     # Initialize engine audio system
-    engine_audio = EngineAudio(
+    engine_audio = StreamingAudio(
         audio_file="sound/engine.wav",
-        idle_rpm=engine_cfg.rpm_idle,
-        redline_rpm=engine_cfg.rpm_redline,
         min_pitch=1.0,
         max_pitch=4.0,
     )
+        
+    # Initialize engine audio system
+    tire_audio = StreamingAudio(
+        audio_file="sound/tires_squal_loop.wav",
+        volume=0.0
+    )
+
     engine_audio.start()
-    
+    tire_audio.start()
+
     # Create ground areas with different traction from config
     ground_bodies = []
     for area in surface_config['ground_areas']:
@@ -1610,10 +1620,8 @@ def main():
     # Skid marks system (always enabled, always draws lines)
     skid_config = config.get('skid_marks', {})
     skid_mark_width = skid_config.get('mark_width', 0.12)
-    max_marks = skid_config.get('max_marks', 5000)
     min_intensity = skid_config.get('min_intensity', 0.1)
     fade_rate = skid_config.get('fade_rate', 0.002)
-    skid_color = tuple(skid_config.get('color', [40, 40, 40]))
     
     # Create a persistent surface for all skid marks (persists across frames)
     skid_surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
@@ -1634,6 +1642,12 @@ def main():
                 elif event.key == K_f:
                     # Toggle follow mode with 'F' key
                     follow_car = not follow_car
+                elif event.key == K_r:
+                    # Reset kart position to center with 'R' key
+                    car.body.position = b2Vec2(initial_position[0], initial_position[1])
+                    car.body.angle = 0.0
+                    car.body.linearVelocity  = b2Vec2(0.0, 0.0)
+                    car.body.angularVelocity = 0.0
             elif event.type == KEYUP:
                 if event.key in key_map:
                     pressed_keys.discard(key_map[event.key])
@@ -1674,7 +1688,19 @@ def main():
         
         # Update engine audio with current RPM
         current_rpm = car.engine.omega_e * 60.0 / (2 * math.pi)
-        engine_audio.set_rpm(current_rpm)
+        rev_pitch = (current_rpm - engine_cfg.rpm_idle) / (engine_cfg.rpm_redline - engine_cfg.rpm_idle)
+        engine_audio.set_pitch(rev_pitch)
+    
+        # Update tire screech audio with max tire skid
+        skid_level = clamp(
+            max((tire.skid_intensity for tire in car.tires), default=0.0),
+            0.0,
+            1.0,
+        )
+
+        print("Skid level: " + str(round(skid_level,2)))
+
+        tire_audio.set_volume(clamp(skid_level, 0.0, 1.0))
         
         # Apply aerodynamic and rotational damping for stability
         # Apply quadratic aerodynamic drag (single model, no double-counting)
@@ -1869,6 +1895,7 @@ def main():
     
     # Cleanup
     engine_audio.stop()
+    tire_audio.stop()
     pygame.quit()
 
 
