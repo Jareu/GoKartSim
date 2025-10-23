@@ -960,6 +960,12 @@ class TDCar(object):
         wheel_radius = tire_kws.get('wheel_radius', 0.10)
         self.wheel_radius = wheel_radius
         
+        # Filtered acceleration state for weight transfer stability
+        self.filtered_a_long = 0.0
+        self.filtered_a_lat = 0.0
+        self.accel_filter_alpha = 0.2  # EMA weight for new samples
+        self.accel_slew_limit = 6.0    # Max change per frame [m/s^2]
+        
         # Create tires with per-tire pneumatic trail (fronts/rears differ for better turn-in)
         self.tires = []
         front_trail = tire_kws.get('pneumatic_trail_front', 0.06)
@@ -1018,8 +1024,31 @@ class TDCar(object):
         # Transform to car frame (forward = +y, left = +x in car local frame)
         fwd = self.body.GetWorldVector((0, 1))
         left = self.body.GetWorldVector((-1, 0))
-        a_long = a_world_x * fwd.x + a_world_y * fwd.y  # Forward acceleration
-        a_lat = a_world_x * left.x + a_world_y * left.y  # Left lateral acceleration
+        a_long_raw = a_world_x * fwd.x + a_world_y * fwd.y  # Forward acceleration
+        a_lat_raw = a_world_x * left.x + a_world_y * left.y  # Left lateral acceleration
+        
+        # Filter and slew-limit accelerations to stabilise load transfer
+        alpha = self.accel_filter_alpha
+        max_delta = self.accel_slew_limit
+        
+        target_long = (1.0 - alpha) * self.filtered_a_long + alpha * a_long_raw
+        delta_long = target_long - self.filtered_a_long
+        if delta_long > max_delta:
+            target_long = self.filtered_a_long + max_delta
+        elif delta_long < -max_delta:
+            target_long = self.filtered_a_long - max_delta
+        self.filtered_a_long = target_long
+        
+        target_lat = (1.0 - alpha) * self.filtered_a_lat + alpha * a_lat_raw
+        delta_lat = target_lat - self.filtered_a_lat
+        if delta_lat > max_delta:
+            target_lat = self.filtered_a_lat + max_delta
+        elif delta_lat < -max_delta:
+            target_lat = self.filtered_a_lat - max_delta
+        self.filtered_a_lat = target_lat
+        
+        a_long = self.filtered_a_long
+        a_lat = self.filtered_a_lat
         
         # Compute weight transfer (normal loads per tire)
         total_mass = self.body.mass + sum(tire.body.mass for tire in self.tires)
