@@ -480,7 +480,8 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
                         Fx_engine_cap: float | None = None,
                         time_step: float = 1 / 120.0,
                         m_effective: float = 0.0,
-                        brake_fade_speed: float = 0.05):
+                        brake_fade_speed: float = 0.05,
+                        tire_state_override: TireState | None = None):
     """
     Returns (Fx, Fy, Mz) in the TIRE FRAME (apply in world via basis vectors).
     Ca: cornering stiffness [N/rad]
@@ -496,8 +497,11 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
     brake_fade_speed: speed threshold for braking fade-out near standstill [m/s]
     """
     # 1) Kinematics -> tire state
-    st = compute_tire_state(tire_vel_world, tire_fwd_world, tire_right_world,
-                            wheel_radius, wheel_omega, v_ref=v_ref_kappa)
+    if tire_state_override is not None:
+        st = tire_state_override
+    else:
+        st = compute_tire_state(tire_vel_world, tire_fwd_world, tire_right_world,
+                                wheel_radius, wheel_omega, v_ref=v_ref_kappa)
 
     # 2) Effective friction
     mu = effective_mu(mu_base, zone_mods, N, N0_ref, st.speed)
@@ -512,72 +516,50 @@ def compute_tire_forces(tire_vel_world, tire_fwd_world, tire_right_world,
     Ca_eff    = Ca * soft
     Fy_pure   = pure_lateral(alpha_eff, muN, Ca=Ca_eff)
     
-    # Determine longitudinal request split between acceleration and braking
-    is_accel = throttle_frac > brake_frac and throttle_frac > 0.0
-    Fx_req = 0.0
-    
     ellip_x_eff = ellip_x
     ellip_y_eff = ellip_y
-    
-    if is_accel:
-        kappa_peak = 0.12
-        throttle_headroom = 0.6
-        kappa_target = throttle_frac * kappa_peak * throttle_headroom
-        Fx_req = pure_longitudinal(kappa_target, muN, Cx=Cx)
-        Fx_req = max(0.0, Fx_req)
-        
-        if Fx_engine_cap is not None and Fx_req > 0.0:
-            Fx_req = min(Fx_req, Fx_engine_cap)
-        
-        if throttle_frac > 0.1:
-            ellip_x_eff = ellip_x * (1.0 + 0.05 * throttle_frac)
-            ellip_y_eff = ellip_y * (1.0 - 0.03 * throttle_frac)
-    else:
-        Fx_req = min(0.0, driver_Fx_request)
-    
-    # Saturation metric (pre-ellipse)
-    if driver_Fx_request < 0.0:
-        sat_request_fx = raw_driver_Fx_request if raw_driver_Fx_request != 0.0 else driver_Fx_request
-    else:
-        sat_request_fx = Fx_req
-    
-    if Fx_req > 0.0 and throttle_frac <= 0.0:
-        sat_request_fx = 0.0
-    if st.speed < 0.5 and Fx_req > 0.0:
-        sat_request_fx = 0.0
-    
-    # Clamp lateral force to ellipse axis
+
+    if throttle_frac > brake_frac and throttle_frac > 0.1:
+        ellip_x_eff = ellip_x * (1.0 + 0.05 * throttle_frac)
+        ellip_y_eff = ellip_y * (1.0 - 0.03 * throttle_frac)
+
     ax = max(EPS, muN * max(EPS, ellip_x_eff))
     ay = max(EPS, muN * max(EPS, ellip_y_eff))
     Fy = clamp(Fy_pure, -ay, ay)
-    
-    pre_sat = ellipse_saturation(sat_request_fx, Fy, muN, ellip_x=ellip_x_eff, ellip_y=ellip_y_eff)
-    
-    forces: TireForces
-    if Fx_req < 0.0 and driver_Fx_request < 0.0:
-        v_parallel = st.v_long
-        if v_parallel <= 0.0 or brake_frac <= 0.0:
-            Fx_final = 0.0
+    Fy_ratio = clamp(Fy / ay, -1.0, 1.0)
+    Fx_cap = ax * sqrt(max(0.0, 1.0 - Fy_ratio * Fy_ratio))
+    v_parallel = st.v_long
+    v_eps = brake_fade_speed
+
+    if brake_frac > throttle_frac and brake_frac > 0.0:
+        Fx_des_mag = brake_frac * muN
+        if abs(v_parallel) > 1e-6:
+            Fx_req = -math.copysign(Fx_des_mag, v_parallel)
         else:
-            Fy_ratio = clamp(Fy / ay, -1.0, 1.0)
-            Fx_cap_neg = -ax * sqrt(max(0.0, 1.0 - Fy_ratio * Fy_ratio))
-            Fx_stop_neg = Fx_cap_neg
-            if m_effective > 0.0 and time_step > 0.0:
-                Fx_stop_neg = - (m_effective * v_parallel) / max(EPS, time_step)
-            Fx_candidates = [Fx_req, Fx_cap_neg]
-            if m_effective > 0.0 and time_step > 0.0:
-                Fx_candidates.append(Fx_stop_neg)
-            Fx_final = max(Fx_candidates)
-            Fx_final = min(Fx_final, 0.0)
-            if v_parallel < brake_fade_speed:
-                fade = min(v_parallel / max(EPS, brake_fade_speed), 1.0)
-                Fx_final *= max(0.0, fade)
-        forces = TireForces(Fx_final, Fy)
-    else:
-        Fy_ratio = clamp(Fy / ay, -1.0, 1.0)
-        Fx_cap = ax * sqrt(max(0.0, 1.0 - Fy_ratio * Fy_ratio))
+            Fx_req = 0.0
+
+        if m_effective > 0.0 and Fx_req * v_parallel < 0.0:
+            Fx_stop = -(m_effective * v_parallel) / max(EPS, time_step)
+            if abs(Fx_req) > abs(Fx_stop):
+                Fx_req = Fx_stop
+        elif Fx_req * v_parallel >= 0.0:
+            Fx_req = 0.0
+
         Fx_final = clamp(Fx_req, -Fx_cap, Fx_cap)
-        forces = TireForces(Fx_final, Fy)
+
+        if abs(v_parallel) < v_eps:
+            fade = min(abs(v_parallel) / v_eps, 1.0)
+            Fx_final *= fade
+
+        pre_sat = ellipse_saturation(Fx_req, Fy, muN, ellip_x=ellip_x_eff, ellip_y=ellip_y_eff)
+    else:
+        Fx_req = pure_longitudinal(st.kappa, muN, Cx=Cx)
+        if Fx_engine_cap is not None and throttle_frac > 0.0 and Fx_req > 0.0:
+            Fx_req = min(Fx_req, Fx_engine_cap)
+        Fx_final = clamp(Fx_req, -Fx_cap, Fx_cap)
+        pre_sat = ellipse_saturation(Fx_req, Fy, muN, ellip_x=ellip_x_eff, ellip_y=ellip_y_eff)
+
+    forces: TireForces = TireForces(Fx_final, Fy)
     
     # (Patch 1) Compute self-aligning moment (pneumatic trail torque)
     Mz = aligning_moment(Fy=forces.Fy, alpha=st.alpha,
@@ -668,7 +650,14 @@ class TDTire(object):
                  tire_mass=3.0,
                  default_traction=1.0,
                  position=(0, 0),
-                 corner_loss_cap_fraction=0.05):
+                 corner_loss_cap_fraction=0.05,
+                 wheel_inertia=0.08,
+                 bearing_friction=0.3,
+                 viscous_friction=0.03,
+                 rolling_resistance_rot=0.002,
+                 slip_relaxation=0.2,
+                 kappa_relaxation=0.2,
+                 slip_speed_epsilon=0.5):
 
         world = car.body.world
         self.car = car  # Store reference for applying aligning torque
@@ -693,6 +682,15 @@ class TDTire(object):
         self.ellipse_bias_x = ellipse_bias_x  # >1 favors longitudinal, <1 favors lateral
         self.ellipse_bias_y = ellipse_bias_y
         
+        # Wheel rotational dynamics parameters
+        self.inertia = max(EPS, wheel_inertia)
+        self.tau_bearing = max(0.0, bearing_friction)
+        self.tau_viscous = max(0.0, viscous_friction)
+        self.rolling_resistance_rot = max(0.0, rolling_resistance_rot)
+        self.slip_relax_alpha = clamp(slip_relaxation, 0.0, 1.0)
+        self.kappa_relax_alpha = clamp(kappa_relaxation, 0.0, 1.0)
+        self.slip_speed_epsilon = max(0.01, slip_speed_epsilon)
+        
         # State tracking
         self.ground_areas = []
         self.zone_friction_modifiers = []  # List of friction modifiers from ground zones
@@ -706,6 +704,14 @@ class TDTire(object):
         # Driver input fractions (0-1) for fine-grained brake distribution
         self.throttle_frac = 0.0  # 0 = no throttle, 1 = full throttle
         self.brake_frac = 0.0     # 0 = no braking, 1 = full braking
+        self.drive_torque = 0.0
+        self.max_brake_torque = max_brake_force * self.wheel_radius
+        
+        # Rotational state
+        self.omega = 0.0
+        self.filtered_alpha = 0.0
+        self.filtered_kappa = 0.0
+        self._slip_initialized = False
         
         # Last-frame force tracking for engine load (resistive torques only)
         self.last_forces = TireForces(0.0, 0.0)  # Last computed forces
@@ -735,9 +741,17 @@ class TDTire(object):
             mass_data = self.body.massData
             mass_data.mass = tire_mass
             mass_data.I *= scale_factor  # Scale moment of inertia proportionally
-            self.body.massData = mass_data
+        self.body.massData = mass_data
         
         self.body.userData = {'obj': self}
+        
+        # Initialize rotational state to match chassis velocity
+        car_forward = car.body.GetWorldVector((0, 1))
+        car_vel = car.body.linearVelocity
+        v_long_init = car_vel.x * car_forward.x + car_vel.y * car_forward.y
+        self.omega = v_long_init / max(EPS, self.wheel_radius)
+        self.filtered_alpha = 0.0
+        self.filtered_kappa = 0.0
 
     def set_driver_inputs(self, keys):
         """Set driver throttle/brake request. Called before apply_tire_forces."""
@@ -757,6 +771,10 @@ class TDTire(object):
         )
         self.raw_driver_Fx_request = self.driver_Fx_request # Store original request
     
+    def set_drive_torque(self, torque: float) -> None:
+        """Assign drivetrain torque delivered to this wheel (lockstep with engine)."""
+        self.drive_torque = torque
+    
     def apply_tire_forces(self, normal_load: float, N0_ref: float, 
                           a_long: float, a_lat: float,
                           time_step: float, mass_share: float,
@@ -772,8 +790,29 @@ class TDTire(object):
         fwd_world = (fwd.x, fwd.y)
         right_world = (right.x, right.y)
         
+        # Compute tire state with wheel spin and apply relaxation filtering
+        tire_state_raw = compute_tire_state(
+            tire_vel, fwd_world, right_world,
+            self.wheel_radius, self.omega, v_ref=self.slip_speed_epsilon
+        )
+        if not self._slip_initialized:
+            self.filtered_alpha = tire_state_raw.alpha
+            self.filtered_kappa = tire_state_raw.kappa
+            self._slip_initialized = True
+        else:
+            self.filtered_alpha = (
+                (1.0 - self.slip_relax_alpha) * self.filtered_alpha
+                + self.slip_relax_alpha * tire_state_raw.alpha
+            )
+            self.filtered_kappa = (
+                (1.0 - self.kappa_relax_alpha) * self.filtered_kappa
+                + self.kappa_relax_alpha * tire_state_raw.kappa
+            )
+        tire_state_raw.alpha = self.filtered_alpha
+        tire_state_raw.kappa = self.filtered_kappa
+
         # Effective mass share only matters while this tire is braking
-        m_eff = mass_share if self.driver_Fx_request < 0.0 else 0.0
+        m_eff = mass_share if self.brake_frac > 0.0 else 0.0
         
         # Compute tire forces using new physics model
         forces, tire_state, pre_sat, Mz = compute_tire_forces(
@@ -781,7 +820,7 @@ class TDTire(object):
             tire_fwd_world=fwd_world,
             tire_right_world=right_world,
             wheel_radius=self.wheel_radius,
-            wheel_omega=None,  # Not modeling wheel spin yet
+            wheel_omega=self.omega,
             mu_base=self.default_traction,
             zone_mods=self.zone_friction_modifiers,
             N=normal_load,
@@ -789,7 +828,7 @@ class TDTire(object):
             a_long=a_long,
             a_lat=a_lat,
             driver_Fx_request=self.driver_Fx_request,
-            v_ref_kappa=3.0,
+            v_ref_kappa=self.slip_speed_epsilon,
             Ca=self.cornering_stiffness,
             Cx=self.longitudinal_stiffness,
             ellip_x=self.ellipse_bias_x,
@@ -799,15 +838,40 @@ class TDTire(object):
             raw_driver_Fx_request=self.raw_driver_Fx_request,
             slip_angle_peak=self.slip_angle_peak,
             pneumatic_trail0=self.pneumatic_trail0,
-            # Engine cap for acceleration (rear tires only)
             Fx_engine_cap=(getattr(self.car, 'Fx_engine_cap_per_wheel', None) if self in self.car.tires[:2] else None),
             time_step=time_step,
             m_effective=m_eff,
-            brake_fade_speed=brake_fade_speed
+            brake_fade_speed=brake_fade_speed,
+            tire_state_override=tire_state_raw
         )
         
         # Store state for skid marks
         self.tire_state = tire_state
+        v_parallel = tire_state.v_long
+        sign_spin = 0.0
+        if abs(self.omega) > 1e-5:
+            sign_spin = copysign(1.0, self.omega)
+        elif abs(v_parallel) > 1e-5:
+            sign_spin = copysign(1.0, v_parallel)
+        
+        T_drive = self.drive_torque
+        T_brake_cmd = min(self.brake_frac * self.max_brake_torque, self.max_brake_torque)
+        if abs(self.omega) > 1e-5:
+            spin_sign = math.copysign(1.0, self.omega)
+        elif abs(v_parallel) > 1e-5:
+            spin_sign = math.copysign(1.0, v_parallel / max(EPS, self.wheel_radius))
+        else:
+            spin_sign = 0.0
+        T_brake_eff = T_brake_cmd * spin_sign
+        T_tire = forces.Fx * self.wheel_radius
+        T_bearing = self.tau_bearing * sign_spin
+        T_viscous = self.tau_viscous * self.omega
+        T_rr = self.rolling_resistance_rot * max(0.0, normal_load) * self.wheel_radius * spin_sign
+        T_net = T_drive - T_brake_eff - T_tire - T_bearing - T_viscous - T_rr
+        self.omega += (T_net / self.inertia) * time_step
+        
+        if abs(self.omega) < 1e-4:
+            self.omega = 0.0
         
         # Calculate slip-based intensity (α and κ contribution)
         slip_sig = skid_intensity(
@@ -846,6 +910,7 @@ class TDTire(object):
         
         # Get current speed to gate losses (prevent over-damping at standstill)
         chassis = self.car.body
+        v_parallel = self.tire_state.v_long if self.tire_state else 0.0
         v = chassis.linearVelocity
         speed = math.hypot(v.x, v.y)
         
@@ -860,7 +925,13 @@ class TDTire(object):
             F_rr = (Crr0 + k_rr_alpha * (alpha * alpha)) * N
 
             fwd = chassis.GetWorldVector((0, 1))
-            chassis.ApplyForce((-F_rr * fwd.x, -F_rr * fwd.y), chassis.worldCenter, True)
+            if abs(v_parallel) > 1e-6:
+                sign_long = -math.copysign(1.0, v_parallel)
+            elif speed > 1e-6:
+                sign_long = -math.copysign(1.0, v.y * fwd.y + v.x * fwd.x)
+            else:
+                sign_long = 0.0
+            chassis.ApplyForce((sign_long * F_rr * fwd.x, sign_long * F_rr * fwd.y), chassis.worldCenter, True)
             self.last_F_rr = F_rr
         else:
             self.last_F_rr = 0.0
@@ -876,7 +947,13 @@ class TDTire(object):
             F_corner = min(F_corner_raw, cap_fraction * muN)
 
             fwd = chassis.GetWorldVector((0, 1))
-            chassis.ApplyForce((-F_corner * fwd.x, -F_corner * fwd.y), chassis.worldCenter, True)
+            if abs(v_parallel) > 1e-6:
+                sign_long = -math.copysign(1.0, v_parallel)
+            elif speed > 1e-6:
+                sign_long = -math.copysign(1.0, v.y * fwd.y + v.x * fwd.x)
+            else:
+                sign_long = 0.0
+            chassis.ApplyForce((sign_long * F_corner * fwd.x, sign_long * F_corner * fwd.y), chassis.worldCenter, True)
             self.last_F_corner = F_corner
         else:
             self.last_F_corner = 0.0
@@ -1073,6 +1150,7 @@ class TDCar(object):
         # Set driver inputs (throttle/brake) for all tires
         for tire in self.tires:
             tire.set_driver_inputs(keys)
+            tire.set_drive_torque(0.0)
         
         # Apply rear-biased brake distribution (Patch B)
         if brake_config:
@@ -1189,12 +1267,20 @@ class TDCar(object):
             T_axle_avail = self.engine.T_e * self.gear_ratio * self.driveline_eta
             num_driven = 2  # rear-drive only
             Fx_cap = max(0.0, T_axle_avail / max(EPS, num_driven * self.wheel_radius))
+            drive_torque_axle = self.engine.T_e * self.gear_ratio * self.driveline_eta
+            drive_torque_per_wheel = drive_torque_axle / num_driven
+            for tire in self.tires[:num_driven]:
+                tire.set_drive_torque(drive_torque_per_wheel)
+            for tire in self.tires[num_driven:]:
+                tire.set_drive_torque(0.0)
             
             # At redline under power: set Fx cap to 0 to prevent additional acceleration
             at_redline = (abs(self.engine.omega_e - omega_e_max) < 1e-3) and (throttle_cmd > 0.05)
             self.Fx_engine_cap_per_wheel = 0.0 if at_redline else Fx_cap
         else:
             self.Fx_engine_cap_per_wheel = float('inf')  # No cap if no engine
+            for tire in self.tires:
+                tire.set_drive_torque(0.0)
         
         # Aerodynamic drag applied once to chassis; engine sees it via kinematic coupling
         v = self.body.linearVelocity
@@ -1214,7 +1300,7 @@ class TDCar(object):
         
         # Apply tire forces with weight transfer
         # Order: RL=0, RR=1, FL=2, FR=3
-        braking_tire_count = sum(1 for tire in self.tires if tire.driver_Fx_request < 0.0)
+        braking_tire_count = sum(1 for tire in self.tires if tire.brake_frac > 0.0)
         if braking_tire_count == 0:
             braking_tire_count = len(self.tires)
         mass_share = (total_mass / max(1, braking_tire_count)) if total_mass > 0.0 else 0.0
@@ -1599,7 +1685,14 @@ def main():
         pneumatic_trail0=tire_config.get('pneumatic_trail0', 0.06),
         pneumatic_trail_front=tire_config.get('pneumatic_trail_front', 0.06),
         pneumatic_trail_rear=tire_config.get('pneumatic_trail_rear', 0.02),
-        corner_loss_cap_fraction=tire_config.get('corner_loss_cap_fraction', 0.05)
+        corner_loss_cap_fraction=tire_config.get('corner_loss_cap_fraction', 0.05),
+        wheel_inertia=tire_config.get('wheel_inertia', 0.08),
+        bearing_friction=tire_config.get('bearing_friction', 0.3),
+        viscous_friction=tire_config.get('viscous_friction', 0.03),
+        rolling_resistance_rot=tire_config.get('rolling_resistance_rot', 0.002),
+        slip_relaxation=tire_config.get('slip_relaxation', 0.2),
+        kappa_relaxation=tire_config.get('kappa_relaxation', 0.2),
+        slip_speed_epsilon=tire_config.get('slip_speed_epsilon', 0.5)
     )
     
     # Store initial position for reset functionality

@@ -40,7 +40,15 @@
       "ellipse_bias_y": 1.0,
       "pneumatic_trail0": 0.06,
       "pneumatic_trail_front": 0.06,
-      "pneumatic_trail_rear": 0.02
+      "pneumatic_trail_rear": 0.02,
+      "corner_loss_cap_fraction": 0.05,
+      "wheel_inertia": 0.08,
+      "bearing_friction": 0.3,
+      "viscous_friction": 0.03,
+      "rolling_resistance_rot": 0.002,
+      "slip_relaxation": 0.2,
+      "kappa_relaxation": 0.2,
+      "slip_speed_epsilon": 1.5
     },
     "steering": {
       "lock_angle_degrees": 35.0,
